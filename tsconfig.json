@@ -31,5 +31,5 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules", "excalidraw"]
+  "exclude": ["node_modules", "excalidraw", "test-fixtures"]
 }

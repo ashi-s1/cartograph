@@ -1,6 +1,6 @@
 /**
- * Phase 3 — Parser Data Contracts
- * Defines the strict types for parsed files, edges, coverage reports, and graph metrics.
+ * Phase 3 & 8 — Parser Data Contracts
+ * Defines the strict types for parsed files, edges, coverage reports, graph metrics, routes, and roles.
  */
 
 export type EdgeKind = "import" | "re_export" | "dynamic_import";
@@ -72,13 +72,28 @@ export interface FileWalkReport {
   skipReasons: Record<string, SkipRecord>;
 }
 
+export interface ExtractedRoute {
+  file: string;
+  method: string;
+  path: string;
+}
+
+export interface FileRole {
+  file: string;
+  role: string;
+  confidence: number;
+}
+
 export interface ParserResult {
   repositoryRoot: string;
   timestamp: string;
+  framework: string;
   walk: FileWalkReport;
   files: ParsedFile[];
   edges: ParsedEdge[];
   coverage: CoverageReport;
   distinctFoldersCount: number;
   folders: string[];
+  routes: ExtractedRoute[];
+  roles: FileRole[];
 }

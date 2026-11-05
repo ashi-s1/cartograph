@@ -13,11 +13,11 @@ import {
   FileQuestion,
   BookOpen,
   Zap,
+  Globe,
   Link as LinkIcon,
   ChevronDown,
   ChevronRight,
   AlertTriangle,
-  RotateCcw,
 } from "lucide-react";
 import type { ParserResult, ParsedFile } from "@/lib/parser/types";
 import type { FoldedNode } from "@/lib/canvas/folding";
@@ -30,8 +30,12 @@ import {
 import {
   transitiveWalk,
   computeInsights,
-  type TransitiveWalkResult,
 } from "@/lib/canvas/graph-maths";
+import {
+  getCategoryDefinition,
+  FRAMEWORK_TAXONOMIES,
+  type FrameworkType,
+} from "@/lib/taxonomy";
 
 export interface DetailPaneSelection {
   type: "node" | "file" | null;
@@ -55,25 +59,53 @@ interface DetailPaneProps {
   onHoverTarget: (target: HoverTarget | null) => void;
 }
 
+function getMethodBadgeClass(method: string): string {
+  switch (method.toUpperCase()) {
+    case "GET":
+      return "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30";
+    case "POST":
+      return "bg-sky-500/15 text-sky-400 border border-sky-500/30";
+    case "PUT":
+      return "bg-amber-500/15 text-amber-400 border border-amber-500/30";
+    case "DELETE":
+      return "bg-rose-500/15 text-rose-400 border border-rose-500/30";
+    case "PATCH":
+      return "bg-purple-500/15 text-purple-400 border border-purple-500/30";
+    default:
+      return "bg-zinc-800 text-zinc-300 border border-zinc-700";
+  }
+}
+
 export function DetailPane({
   data,
   selection,
   activeTab,
   onTabChange,
   onSelectFile,
-  onSelectNode,
   hoveredTarget,
   onHoverTarget,
 }: DetailPaneProps) {
   const selectedFile = selection?.file;
   const selectedNode = selection?.node;
 
-  // Phase 6: Walk Mode for selected file (blast radius vs dependency chain)
+  // Walk Mode for selected file (blast radius vs dependency chain)
   const [walkMode, setWalkMode] = useState<"blast" | "chain" | null>(null);
 
-  // Phase 6: Insights panel collapsed by default
+  // Insights panel collapsed by default
   const [isInsightsOpen, setIsInsightsOpen] = useState(false);
   const [expandedCycleId, setExpandedCycleId] = useState<string | null>(null);
+
+  // Route search filter
+  const [routeSearchQuery, setRouteSearchQuery] = useState("");
+
+  // Map file path -> formal role from parser results
+  const roleMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const r of data.roles || []) {
+      map.set(r.file, r.role);
+    }
+    return map;
+  }, [data.roles]);
 
   // Pre-indexed files map for O(1) lookups
   const filesMap = useMemo(() => {
@@ -84,10 +116,33 @@ export function DetailPane({
     return map;
   }, [data.files]);
 
+  // Detected framework
+  const frameworkType = (data.framework as FrameworkType) || "fallback";
+  const frameworkTaxonomy = FRAMEWORK_TAXONOMIES[frameworkType] || FRAMEWORK_TAXONOMIES.fallback;
+
+  // Unclassified modules count (Generic role)
+  const unclassifiedCount = useMemo(() => {
+    let count = 0;
+    for (const f of data.files) {
+      const role = roleMap.get(f.path);
+      if (!role || role === "Generic" || role === "Unclassified Module") {
+        count++;
+      }
+    }
+    return count;
+  }, [data.files, roleMap]);
+
   // 1. Compute repository resting state summary
   const repoSummary = useMemo(() => {
-    return computeRepoSummary(data.files, data.edges, data.repositoryRoot);
-  }, [data.files, data.edges, data.repositoryRoot]);
+    return computeRepoSummary(
+      data.files,
+      data.edges,
+      data.repositoryRoot,
+      frameworkTaxonomy.label,
+      data.routes?.length || 0,
+      unclassifiedCount
+    );
+  }, [data.files, data.edges, data.repositoryRoot, frameworkTaxonomy.label, data.routes?.length, unclassifiedCount]);
 
   // 2. Compute file-level dependency lists if a file is selected
   const fileDeps = useMemo(() => {
@@ -95,25 +150,31 @@ export function DetailPane({
     return computeFileDependencies(selectedFile.path, data.edges);
   }, [selectedFile, data.edges]);
 
-  // 3. Compute Phase 6 Blast Radius (inbound walk, depth 2)
-  const blastRadiusResult = useMemo<TransitiveWalkResult | null>(() => {
-    if (!selectedFile) return null;
-    return transitiveWalk(selectedFile.path, data.edges, filesMap, "inbound", 2);
+  // 3. Compute Blast Radius (inbound walk, depth 2)
+  const blastRadiusLevels = useMemo(() => {
+    if (!selectedFile) return { level1: [] as string[], level2: [] as string[], total: 0 };
+    const res = transitiveWalk(selectedFile.path, data.edges, filesMap, "inbound", 2);
+    const level1 = res.results.filter((r) => r.depth === 1).map((r) => r.filePath);
+    const level2 = res.results.filter((r) => r.depth === 2).map((r) => r.filePath);
+    return { level1, level2, total: res.results.length };
   }, [selectedFile, data.edges, filesMap]);
 
-  // 4. Compute Phase 6 Dependency Chain (outbound walk, depth 2)
-  const dependencyChainResult = useMemo<TransitiveWalkResult | null>(() => {
-    if (!selectedFile) return null;
-    return transitiveWalk(selectedFile.path, data.edges, filesMap, "outbound", 2);
+  // 4. Compute Dependency Chain (outbound walk, depth 2)
+  const dependencyChainLevels = useMemo(() => {
+    if (!selectedFile) return { level1: [] as string[], level2: [] as string[], total: 0 };
+    const res = transitiveWalk(selectedFile.path, data.edges, filesMap, "outbound", 2);
+    const level1 = res.results.filter((r) => r.depth === 1).map((r) => r.filePath);
+    const level2 = res.results.filter((r) => r.depth === 2).map((r) => r.filePath);
+    return { level1, level2, total: res.results.length };
   }, [selectedFile, data.edges, filesMap]);
 
   // 5. Compute folder breakdown if a folded folder is selected
   const folderKinds = useMemo(() => {
-    if (!selectedNode) return [];
+    if (!selectedNode) return {};
     return computeFolderKindsBreakdown(selectedNode.files);
   }, [selectedNode]);
 
-  // External connections for folder node
+  // 6. Compute folder-level external dependencies
   const folderDeps = useMemo(() => {
     if (!selectedNode) return { inbound: [], outbound: [] };
     const folderFilePaths = new Set(selectedNode.files.map((f) => f.path));
@@ -121,12 +182,12 @@ export function DetailPane({
     const outbound = new Set<string>();
 
     for (const edge of data.edges) {
-      const sourceInFolder = folderFilePaths.has(edge.source);
-      const targetInFolder = folderFilePaths.has(edge.target);
+      const sourceIn = folderFilePaths.has(edge.source);
+      const targetIn = folderFilePaths.has(edge.target);
 
-      if (!sourceInFolder && targetInFolder) {
+      if (targetIn && !sourceIn) {
         inbound.add(edge.source);
-      } else if (sourceInFolder && !targetInFolder) {
+      } else if (sourceIn && !targetIn) {
         outbound.add(edge.target);
       }
     }
@@ -137,15 +198,42 @@ export function DetailPane({
     };
   }, [selectedNode, data.edges]);
 
-  // 6. Compute Phase 6 Insights (Orphans, Hotspots, Cycles, Oversized)
+  // 7. Compute deterministic structural insights
   const insights = useMemo(() => {
     return computeInsights(data.files, data.edges);
   }, [data.files, data.edges]);
 
+  // 8. Declared routes for currently selected file
+  const selectedFileRoutes = useMemo(() => {
+    if (!selectedFile || !data.routes) return [];
+    return data.routes.filter((r) => r.file === selectedFile.path);
+  }, [selectedFile, data.routes]);
+
+  // Filtered routes for resting state route table
+  const filteredRoutes = useMemo(() => {
+    if (!data.routes) return [];
+    if (!routeSearchQuery.trim()) return data.routes;
+    const query = routeSearchQuery.toLowerCase().trim();
+    return data.routes.filter(
+      (r) =>
+        r.path.toLowerCase().includes(query) ||
+        r.method.toLowerCase().includes(query) ||
+        r.file.toLowerCase().includes(query)
+    );
+  }, [data.routes, routeSearchQuery]);
+
+  // Concrete role of selected file
+  const selectedFileRole = selectedFile
+    ? roleMap.get(selectedFile.path) || classifyFile(selectedFile.path).kind
+    : null;
+  const categoryDef = selectedFileRole
+    ? getCategoryDefinition(frameworkType, selectedFileRole)
+    : null;
+
   return (
     <aside
-      aria-label="Selection details pane"
-      className="flex w-96 shrink-0 flex-col border-l border-zinc-800 bg-[#0e1013]/95 backdrop-blur-xs select-none"
+      aria-label="Detail inspection pane"
+      className="flex w-96 shrink-0 flex-col border-l border-zinc-800 bg-[#0e1013]/90 backdrop-blur-xs select-none"
     >
       {/* Settled Two Tabs Header: Structure & Explanation */}
       <div className="flex h-11 border-b border-zinc-800/80 bg-[#0f1117] px-2">
@@ -198,18 +286,18 @@ export function DetailPane({
           /* STRUCTURE TAB: Selected File View                       */
           /* ======================================================== */
           <div className="space-y-4">
-            {/* File Path & Kind Header */}
+            {/* File Path & Framework Concrete Role Header */}
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5">
                 <FileCode className="h-3.5 w-3.5 text-sky-400 shrink-0" />
                 <span
                   className="rounded px-1.5 py-0.5 font-mono text-[10px] font-medium"
                   style={{
-                    backgroundColor: `${classifyFile(selectedFile.path).badgeColor}20`,
-                    color: classifyFile(selectedFile.path).badgeColor,
+                    backgroundColor: `${categoryDef?.color || "#64748b"}20`,
+                    color: categoryDef?.color || "#94a3b8",
                   }}
                 >
-                  {classifyFile(selectedFile.path).kind}
+                  {selectedFileRole}
                 </span>
               </div>
               <div
@@ -248,355 +336,379 @@ export function DetailPane({
               </div>
             </div>
 
-            {/* Phase 6: Graph Maths Action Buttons (Blast Radius & Dependency Chain) */}
-            <div className="grid grid-cols-2 gap-2 pt-1">
+            {/* Declared Routes for this specific file */}
+            {selectedFileRoutes.length > 0 && (
+              <div className="space-y-1.5 rounded-lg border border-zinc-800 bg-zinc-900/40 p-2.5">
+                <div className="flex items-center gap-1.5">
+                  <Globe className="h-3.5 w-3.5 text-sky-400 shrink-0" />
+                  <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-zinc-300">
+                    Declared Routes ({selectedFileRoutes.length})
+                  </span>
+                </div>
+                <div className="space-y-1 pt-1">
+                  {selectedFileRoutes.map((route, i) => (
+                    <div
+                      key={i}
+                      className="flex items-center gap-2 rounded bg-zinc-950/60 px-2 py-1 font-mono text-[11px] border border-zinc-800/80"
+                    >
+                      <span
+                        className={`shrink-0 rounded px-1.5 py-0.2 text-[10px] font-bold uppercase ${getMethodBadgeClass(
+                          route.method
+                        )}`}
+                      >
+                        {route.method}
+                      </span>
+                      <span className="text-zinc-200 font-semibold truncate select-text">
+                        {route.path}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Walk Modes Toggle Bar */}
+            <div className="flex items-center gap-2 border-t border-zinc-800/80 pt-3">
               <button
                 type="button"
                 onClick={() => setWalkMode(walkMode === "blast" ? null : "blast")}
-                className={`flex items-center justify-center gap-1.5 rounded border px-2 py-1.5 font-mono text-[11px] font-semibold transition-colors cursor-pointer ${
+                className={`flex-1 flex items-center justify-center gap-1.5 rounded px-2 py-1.5 font-mono text-[11px] font-medium transition-colors cursor-pointer border ${
                   walkMode === "blast"
-                    ? "bg-rose-500/25 border-rose-400 text-rose-200 ring-1 ring-rose-400/50"
-                    : "border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20"
+                    ? "bg-amber-500/20 text-amber-300 border-amber-400/50 shadow-xs"
+                    : "bg-zinc-900/60 text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white"
                 }`}
-                title="Everything that breaks if this file changes (2 levels deep)"
+                title="Walk 2 levels inbound: what breaks if this file changes?"
               >
-                <Zap className="h-3.5 w-3.5 text-rose-400" />
-                <span>Blast radius</span>
+                <Zap className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                <span>Blast Radius</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setWalkMode(walkMode === "chain" ? null : "chain")}
-                className={`flex items-center justify-center gap-1.5 rounded border px-2 py-1.5 font-mono text-[11px] font-semibold transition-colors cursor-pointer ${
+                className={`flex-1 flex items-center justify-center gap-1.5 rounded px-2 py-1.5 font-mono text-[11px] font-medium transition-colors cursor-pointer border ${
                   walkMode === "chain"
-                    ? "bg-sky-500/25 border-sky-400 text-sky-200 ring-1 ring-sky-400/50"
-                    : "border-sky-500/30 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20"
+                    ? "bg-indigo-500/20 text-indigo-300 border-indigo-400/50 shadow-xs"
+                    : "bg-zinc-900/60 text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white"
                 }`}
-                title="Everything this file needs (2 levels deep)"
+                title="Walk 2 levels outbound: what does this file depend on downstream?"
               >
-                <LinkIcon className="h-3.5 w-3.5 text-sky-400" />
-                <span>Dependency chain</span>
+                <LinkIcon className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
+                <span>Chain</span>
               </button>
             </div>
 
-            {/* PHASE 6 VIEW: Blast Radius Results */}
-            {walkMode === "blast" && blastRadiusResult && (
-              <div className="space-y-3 rounded-lg border border-rose-500/30 bg-rose-500/5 p-3">
-                <div className="flex items-center justify-between border-b border-rose-500/20 pb-2">
+            {/* BLAST RADIUS WALK VIEW */}
+            {walkMode === "blast" && (
+              <div className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-950/10 p-3">
+                <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5">
-                    <Zap className="h-3.5 w-3.5 text-rose-400" />
-                    <span className="font-mono text-xs font-semibold text-rose-200">
-                      Blast Radius ({blastRadiusResult.results.length})
+                    <Zap className="h-3.5 w-3.5 text-amber-400" />
+                    <span className="font-mono text-xs font-semibold text-amber-300">
+                      Blast Radius ({blastRadiusLevels.total} files)
                     </span>
                   </div>
                   <button
                     type="button"
                     onClick={() => setWalkMode(null)}
-                    className="flex items-center gap-1 font-mono text-[10px] text-zinc-400 hover:text-zinc-200 cursor-pointer"
+                    className="font-mono text-[10px] text-zinc-500 hover:text-zinc-300 cursor-pointer"
                   >
-                    <RotateCcw className="h-3 w-3" />
-                    <span>Reset</span>
+                    close
                   </button>
                 </div>
-
-                <p className="text-[11px] text-zinc-400">
-                  Files that break if this file changes (2 levels deep):
+                <p className="text-[11px] text-zinc-400 leading-snug">
+                  Files directly or transitively affected within 2 dependency hops if this file changes.
                 </p>
 
-                {blastRadiusResult.results.length === 0 ? (
-                  <div className="font-mono text-xs text-zinc-500 italic py-1">
-                    No downstream dependents break.
-                  </div>
-                ) : (
-                  <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-zinc-800">
-                    {/* Group by Depth 1 and Depth 2 */}
-                    {[1, 2].map((depth) => {
-                      const filesAtDepth = blastRadiusResult.results.filter(
-                        (r) => r.depth === depth
-                      );
-                      if (filesAtDepth.length === 0) return null;
-                      return (
-                        <div key={depth} className="space-y-1">
-                          <div className="font-mono text-[10px] uppercase font-bold text-rose-300/80">
-                            Depth {depth}: {depth === 1 ? "Direct Dependents" : "Transitive Dependents"} (
-                            {filesAtDepth.length})
-                          </div>
-                          {filesAtDepth.map(({ filePath }) => {
-                            const isHovered =
-                              hoveredTarget?.type === "file" && hoveredTarget.id === filePath;
-                            return (
-                              <div
-                                key={filePath}
-                                onClick={() => onSelectFile(filePath)}
-                                onMouseEnter={() => onHoverTarget({ type: "file", id: filePath })}
-                                onMouseLeave={() => onHoverTarget(null)}
-                                className={`group flex items-center justify-between rounded px-2 py-1 font-mono text-[11px] cursor-pointer transition-colors ${
-                                  isHovered
-                                    ? "bg-rose-500/25 text-rose-200 ring-1 ring-rose-400/60"
-                                    : "text-zinc-300 bg-zinc-900/60 hover:bg-zinc-800 hover:text-white"
-                                }`}
-                                title={filePath}
-                              >
-                                <span className="truncate pr-2">{filePath}</span>
-                                <span className="shrink-0 rounded bg-rose-500/20 px-1 py-0.2 text-[9px] text-rose-300">
-                                  d:{depth}
-                                </span>
-                              </div>
-                            );
-                          })}
+                {/* Level 1: Direct Dependents */}
+                <div className="space-y-1">
+                  <span className="font-mono text-[10px] font-semibold text-amber-400 uppercase">
+                    Level 1 &middot; Direct Dependents ({blastRadiusLevels.level1.length})
+                  </span>
+                  {blastRadiusLevels.level1.length === 0 ? (
+                    <div className="font-mono text-[10px] text-zinc-500 italic">None (safe to modify in isolation)</div>
+                  ) : (
+                    <div className="space-y-0.5 max-h-32 overflow-y-auto pr-1 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-zinc-800">
+                      {blastRadiusLevels.level1.map((p: string) => (
+                        <div
+                          key={p}
+                          onClick={() => onSelectFile(p)}
+                          onMouseEnter={() => onHoverTarget({ type: "file", id: p })}
+                          onMouseLeave={() => onHoverTarget(null)}
+                          className="truncate rounded bg-zinc-900/60 px-2 py-0.5 font-mono text-[10px] text-zinc-300 hover:bg-zinc-800 hover:text-amber-200 cursor-pointer"
+                          title={p}
+                        >
+                          {p}
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Level 2: Transitive Dependents */}
+                <div className="space-y-1 border-t border-amber-900/40 pt-2">
+                  <span className="font-mono text-[10px] font-semibold text-amber-400/80 uppercase">
+                    Level 2 &middot; Transitive Impact ({blastRadiusLevels.level2.length})
+                  </span>
+                  {blastRadiusLevels.level2.length === 0 ? (
+                    <div className="font-mono text-[10px] text-zinc-500 italic">No secondary files affected</div>
+                  ) : (
+                    <div className="space-y-0.5 max-h-32 overflow-y-auto pr-1 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-zinc-800">
+                      {blastRadiusLevels.level2.map((p: string) => (
+                        <div
+                          key={p}
+                          onClick={() => onSelectFile(p)}
+                          onMouseEnter={() => onHoverTarget({ type: "file", id: p })}
+                          onMouseLeave={() => onHoverTarget(null)}
+                          className="truncate rounded bg-zinc-900/60 px-2 py-0.5 font-mono text-[10px] text-zinc-400 hover:bg-zinc-800 hover:text-amber-200 cursor-pointer"
+                          title={p}
+                        >
+                          {p}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
-            {/* PHASE 6 VIEW: Dependency Chain Results */}
-            {walkMode === "chain" && dependencyChainResult && (
-              <div className="space-y-3 rounded-lg border border-sky-500/30 bg-sky-500/5 p-3">
-                <div className="flex items-center justify-between border-b border-sky-500/20 pb-2">
+            {/* DEPENDENCY CHAIN WALK VIEW */}
+            {walkMode === "chain" && (
+              <div className="space-y-3 rounded-lg border border-indigo-500/30 bg-indigo-950/10 p-3">
+                <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5">
-                    <LinkIcon className="h-3.5 w-3.5 text-sky-400" />
-                    <span className="font-mono text-xs font-semibold text-sky-200">
-                      Dependency Chain ({dependencyChainResult.results.length})
+                    <LinkIcon className="h-3.5 w-3.5 text-indigo-400" />
+                    <span className="font-mono text-xs font-semibold text-indigo-300">
+                      Dependency Chain ({dependencyChainLevels.total} files)
                     </span>
                   </div>
                   <button
                     type="button"
                     onClick={() => setWalkMode(null)}
-                    className="flex items-center gap-1 font-mono text-[10px] text-zinc-400 hover:text-zinc-200 cursor-pointer"
+                    className="font-mono text-[10px] text-zinc-500 hover:text-zinc-300 cursor-pointer"
                   >
-                    <RotateCcw className="h-3 w-3" />
-                    <span>Reset</span>
+                    close
                   </button>
                 </div>
-
-                <p className="text-[11px] text-zinc-400">
-                  Files this file needs (2 levels deep):
+                <p className="text-[11px] text-zinc-400 leading-snug">
+                  Files imported directly and secondary modules imported downstream.
                 </p>
 
-                {dependencyChainResult.results.length === 0 ? (
-                  <div className="font-mono text-xs text-zinc-500 italic py-1">
-                    No internal dependencies.
-                  </div>
-                ) : (
-                  <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-zinc-800">
-                    {[1, 2].map((depth) => {
-                      const filesAtDepth = dependencyChainResult.results.filter(
-                        (r) => r.depth === depth
-                      );
-                      if (filesAtDepth.length === 0) return null;
-                      return (
-                        <div key={depth} className="space-y-1">
-                          <div className="font-mono text-[10px] uppercase font-bold text-sky-300/80">
-                            Depth {depth}: {depth === 1 ? "Direct Dependencies" : "Transitive Dependencies"} (
-                            {filesAtDepth.length})
-                          </div>
-                          {filesAtDepth.map(({ filePath }) => {
-                            const isHovered =
-                              hoveredTarget?.type === "file" && hoveredTarget.id === filePath;
-                            return (
-                              <div
-                                key={filePath}
-                                onClick={() => onSelectFile(filePath)}
-                                onMouseEnter={() => onHoverTarget({ type: "file", id: filePath })}
-                                onMouseLeave={() => onHoverTarget(null)}
-                                className={`group flex items-center justify-between rounded px-2 py-1 font-mono text-[11px] cursor-pointer transition-colors ${
-                                  isHovered
-                                    ? "bg-sky-500/25 text-sky-200 ring-1 ring-sky-400/60"
-                                    : "text-zinc-300 bg-zinc-900/60 hover:bg-zinc-800 hover:text-white"
-                                }`}
-                                title={filePath}
-                              >
-                                <span className="truncate pr-2">{filePath}</span>
-                                <span className="shrink-0 rounded bg-sky-500/20 px-1 py-0.2 text-[9px] text-sky-300">
-                                  d:{depth}
-                                </span>
-                              </div>
-                            );
-                          })}
+                {/* Level 1: Direct Imports */}
+                <div className="space-y-1">
+                  <span className="font-mono text-[10px] font-semibold text-indigo-400 uppercase">
+                    Level 1 &middot; Direct Imports ({dependencyChainLevels.level1.length})
+                  </span>
+                  {dependencyChainLevels.level1.length === 0 ? (
+                    <div className="font-mono text-[10px] text-zinc-500 italic">Leaves file (no repository imports)</div>
+                  ) : (
+                    <div className="space-y-0.5 max-h-32 overflow-y-auto pr-1 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-zinc-800">
+                      {dependencyChainLevels.level1.map((p: string) => (
+                        <div
+                          key={p}
+                          onClick={() => onSelectFile(p)}
+                          onMouseEnter={() => onHoverTarget({ type: "file", id: p })}
+                          onMouseLeave={() => onHoverTarget(null)}
+                          className="truncate rounded bg-zinc-900/60 px-2 py-0.5 font-mono text-[10px] text-zinc-300 hover:bg-zinc-800 hover:text-indigo-200 cursor-pointer"
+                          title={p}
+                        >
+                          {p}
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Level 2: Secondary Imports */}
+                <div className="space-y-1 border-t border-indigo-900/40 pt-2">
+                  <span className="font-mono text-[10px] font-semibold text-indigo-400/80 uppercase">
+                    Level 2 &middot; Secondary Downstream ({dependencyChainLevels.level2.length})
+                  </span>
+                  {dependencyChainLevels.level2.length === 0 ? (
+                    <div className="font-mono text-[10px] text-zinc-500 italic">No secondary dependencies</div>
+                  ) : (
+                    <div className="space-y-0.5 max-h-32 overflow-y-auto pr-1 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-zinc-800">
+                      {dependencyChainLevels.level2.map((p: string) => (
+                        <div
+                          key={p}
+                          onClick={() => onSelectFile(p)}
+                          onMouseEnter={() => onHoverTarget({ type: "file", id: p })}
+                          onMouseLeave={() => onHoverTarget(null)}
+                          className="truncate rounded bg-zinc-900/60 px-2 py-0.5 font-mono text-[10px] text-zinc-400 hover:bg-zinc-800 hover:text-indigo-200 cursor-pointer"
+                          title={p}
+                        >
+                          {p}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
-            {/* Standard Inbound Dependents List */}
-            {walkMode === null && (
-              <>
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-[10px] font-medium uppercase tracking-wider text-zinc-400">
-                      Imported By ({fileDeps.inbound.length})
-                    </span>
-                  </div>
-                  {fileDeps.inbound.length === 0 ? (
-                    <div className="font-mono text-[11px] text-zinc-500 italic py-1">
-                      Nothing in the repository imports this file.
-                    </div>
-                  ) : (
-                    <div className="space-y-1 max-h-44 overflow-y-auto overscroll-contain pr-1 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-zinc-800">
-                      {fileDeps.inbound.map((path) => {
-                        const isHovered =
-                          hoveredTarget?.type === "file" && hoveredTarget.id === path;
-                        return (
-                          <div
-                            key={path}
-                            onClick={() => onSelectFile(path)}
-                            onMouseEnter={() => onHoverTarget({ type: "file", id: path })}
-                            onMouseLeave={() => onHoverTarget(null)}
-                            className={`group flex items-center justify-between rounded px-2 py-1 font-mono text-[11px] cursor-pointer transition-colors ${
-                              isHovered
-                                ? "bg-sky-500/25 text-sky-200 ring-1 ring-sky-400/60"
-                                : "text-zinc-300 bg-zinc-900/40 hover:bg-zinc-800/80 hover:text-white"
-                            }`}
-                            title={`Click to focus: ${path}`}
-                          >
-                            <span className="truncate">{path}</span>
-                            <ArrowDownLeft className="h-3 w-3 text-sky-400/70 shrink-0 opacity-0 group-hover:opacity-100" />
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+            {/* Inbound Dependencies (What imports this file) */}
+            <div className="space-y-1.5 border-t border-zinc-800/80 pt-3">
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-[10px] font-medium uppercase tracking-wider text-zinc-400">
+                  Imported By ({fileDeps.inbound.length})
+                </span>
+              </div>
+              {fileDeps.inbound.length === 0 ? (
+                <div className="rounded bg-zinc-900/30 p-2 font-mono text-[10px] text-zinc-500 italic">
+                  Nothing imports this file directly.
                 </div>
+              ) : (
+                <div className="space-y-1 max-h-40 overflow-y-auto overscroll-contain pr-1 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-zinc-800">
+                  {fileDeps.inbound.map((path) => {
+                    const isHovered = hoveredTarget?.type === "file" && hoveredTarget.id === path;
+                    return (
+                      <div
+                        key={path}
+                        onClick={() => onSelectFile(path)}
+                        onMouseEnter={() => onHoverTarget({ type: "file", id: path })}
+                        onMouseLeave={() => onHoverTarget(null)}
+                        className={`truncate rounded px-2 py-1 font-mono text-[11px] cursor-pointer transition-colors ${
+                          isHovered
+                            ? "bg-sky-500/25 text-sky-200 ring-1 ring-sky-400/60"
+                            : "text-zinc-300 bg-zinc-900/40 hover:bg-zinc-800/80 hover:text-white"
+                        }`}
+                        title={path}
+                      >
+                        {path}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
 
-                {/* Standard Outbound Imports List */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-[10px] font-medium uppercase tracking-wider text-zinc-400">
-                      Imports ({fileDeps.outbound.length})
-                    </span>
-                  </div>
-                  {fileDeps.outbound.length === 0 ? (
-                    <div className="font-mono text-[11px] text-zinc-500 italic py-1">
-                      This file has no internal imports.
-                    </div>
-                  ) : (
-                    <div className="space-y-1 max-h-44 overflow-y-auto overscroll-contain pr-1 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-zinc-800">
-                      {fileDeps.outbound.map((path) => {
-                        const isHovered =
-                          hoveredTarget?.type === "file" && hoveredTarget.id === path;
-                        return (
-                          <div
-                            key={path}
-                            onClick={() => onSelectFile(path)}
-                            onMouseEnter={() => onHoverTarget({ type: "file", id: path })}
-                            onMouseLeave={() => onHoverTarget(null)}
-                            className={`group flex items-center justify-between rounded px-2 py-1 font-mono text-[11px] cursor-pointer transition-colors ${
-                              isHovered
-                                ? "bg-sky-500/25 text-sky-200 ring-1 ring-sky-400/60"
-                                : "text-zinc-300 bg-zinc-900/40 hover:bg-zinc-800/80 hover:text-white"
-                            }`}
-                            title={`Click to focus: ${path}`}
-                          >
-                            <span className="truncate">{path}</span>
-                            <ArrowUpRight className="h-3 w-3 text-emerald-400/70 shrink-0 opacity-0 group-hover:opacity-100" />
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+            {/* Outbound Dependencies (What this file imports) */}
+            <div className="space-y-1.5 border-t border-zinc-800/80 pt-3">
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-[10px] font-medium uppercase tracking-wider text-zinc-400">
+                  Imports ({fileDeps.outbound.length})
+                </span>
+              </div>
+              {fileDeps.outbound.length === 0 ? (
+                <div className="rounded bg-zinc-900/30 p-2 font-mono text-[10px] text-zinc-500 italic">
+                  Leaf module (imports no local files).
                 </div>
-              </>
-            )}
+              ) : (
+                <div className="space-y-1 max-h-40 overflow-y-auto overscroll-contain pr-1 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-zinc-800">
+                  {fileDeps.outbound.map((path) => {
+                    const isHovered = hoveredTarget?.type === "file" && hoveredTarget.id === path;
+                    return (
+                      <div
+                        key={path}
+                        onClick={() => onSelectFile(path)}
+                        onMouseEnter={() => onHoverTarget({ type: "file", id: path })}
+                        onMouseLeave={() => onHoverTarget(null)}
+                        className={`truncate rounded px-2 py-1 font-mono text-[11px] cursor-pointer transition-colors ${
+                          isHovered
+                            ? "bg-emerald-500/25 text-emerald-200 ring-1 ring-emerald-400/60"
+                            : "text-zinc-300 bg-zinc-900/40 hover:bg-zinc-800/80 hover:text-white"
+                        }`}
+                        title={path}
+                      >
+                        {path}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         ) : selectedNode ? (
           /* ======================================================== */
-          /* STRUCTURE TAB: Selected Folded Folder View              */
+          /* STRUCTURE TAB: Selected Folded Node View                 */
           /* ======================================================== */
           <div className="space-y-4">
-            {/* Folder Header */}
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               <div className="flex items-center gap-1.5">
                 <Folder className="h-3.5 w-3.5 text-sky-400 shrink-0" />
-                <span className="font-mono text-[10px] uppercase tracking-wider text-zinc-400">
-                  Folder Module
+                <span className="rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-400 uppercase">
+                  Folder
                 </span>
               </div>
-              <div className="font-mono text-sm font-semibold text-zinc-100">
-                {selectedNode.label}
-              </div>
-              <div className="font-mono text-[10px] text-zinc-500 break-all">
-                {selectedNode.folder}
+              <div className="font-mono text-xs font-semibold text-zinc-100 break-all select-text">
+                {selectedNode.folder === "." ? "Root" : selectedNode.folder}
               </div>
             </div>
 
-            {/* Metrics 3-grid */}
-            <div className="grid grid-cols-3 gap-1.5 rounded-lg border border-zinc-800 bg-zinc-900/50 p-2 font-mono text-[11px]">
+            {/* Folder metrics 4-grid */}
+            <div className="grid grid-cols-2 gap-2 rounded-lg border border-zinc-800 bg-zinc-900/50 p-2.5 font-mono text-[11px]">
               <div>
                 <span className="text-[10px] text-zinc-500 uppercase">Files</span>
                 <div className="font-semibold text-zinc-200">{selectedNode.fileCount}</div>
               </div>
               <div>
-                <span className="text-[10px] text-zinc-500 uppercase">Inbound</span>
-                <div className="font-semibold text-sky-300">{selectedNode.fanIn}</div>
+                <span className="text-[10px] text-zinc-500 uppercase">Total Lines</span>
+                <div className="font-semibold text-zinc-200">
+                  {selectedNode.files.reduce((acc, f) => acc + f.lines, 0)}
+                </div>
               </div>
               <div>
-                <span className="text-[10px] text-zinc-500 uppercase">Outbound</span>
-                <div className="font-semibold text-emerald-300">{selectedNode.fanOut}</div>
+                <div className="flex items-center gap-1 text-[10px] text-zinc-500 uppercase">
+                  <ArrowDownLeft className="h-3 w-3 text-sky-400" />
+                  <span>External Inbound</span>
+                </div>
+                <div className="font-semibold text-sky-300">{folderDeps.inbound.length}</div>
+              </div>
+              <div>
+                <div className="flex items-center gap-1 text-[10px] text-zinc-500 uppercase">
+                  <ArrowUpRight className="h-3 w-3 text-emerald-400" />
+                  <span>External Outbound</span>
+                </div>
+                <div className="font-semibold text-emerald-300">{folderDeps.outbound.length}</div>
               </div>
             </div>
 
-            {/* Folder Kinds Breakdown */}
+            {/* Breakdown of file kinds inside folder */}
             <div className="space-y-1.5">
               <span className="font-mono text-[10px] font-medium uppercase tracking-wider text-zinc-400">
-                File Types ({folderKinds.length})
+                Kinds Breakdown
               </span>
-              <div className="space-y-1">
-                {folderKinds.map((k) => (
-                  <div
-                    key={k.kind}
-                    className="flex items-center justify-between rounded bg-zinc-900/40 px-2 py-1 font-mono text-[11px]"
+              <div className="flex flex-wrap gap-1.5">
+                {Object.entries(folderKinds).map(([kind, count]) => (
+                  <span
+                    key={kind}
+                    className="inline-flex items-center gap-1 rounded bg-zinc-900/60 px-2 py-0.5 font-mono text-[10px] text-zinc-300 border border-zinc-800"
                   >
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="h-2 w-2 rounded-xs shrink-0"
-                        style={{ backgroundColor: k.color }}
-                      />
-                      <span className="text-zinc-300">{k.kind}</span>
-                    </div>
-                    <span className="text-zinc-400 font-semibold">{k.count}</span>
-                  </div>
+                    <span>{kind}:</span>
+                    <span className="font-semibold text-zinc-100">{count}</span>
+                  </span>
                 ))}
               </div>
             </div>
 
-            {/* Files List in this folder */}
+            {/* Contained Files list */}
             <div className="space-y-1.5">
               <span className="font-mono text-[10px] font-medium uppercase tracking-wider text-zinc-400">
-                Files in Folder ({selectedNode.files.length})
+                Contained Files ({selectedNode.files.length})
               </span>
               <div className="space-y-1 max-h-48 overflow-y-auto pr-1 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-zinc-800">
-                {selectedNode.files.map((f) => {
-                  const isHovered = hoveredTarget?.type === "file" && hoveredTarget.id === f.path;
+                {selectedNode.files.map((file) => {
+                  const role = roleMap.get(file.path) || classifyFile(file.path).kind;
                   return (
                     <div
-                      key={f.path}
-                      onClick={() => onSelectFile(f.path)}
-                      onMouseEnter={() => onHoverTarget({ type: "file", id: f.path })}
+                      key={file.path}
+                      onClick={() => onSelectFile(file.path)}
+                      onMouseEnter={() => onHoverTarget({ type: "file", id: file.path })}
                       onMouseLeave={() => onHoverTarget(null)}
-                      className={`group flex items-center justify-between rounded px-2 py-1 font-mono text-[11px] cursor-pointer transition-colors ${
-                        isHovered
-                          ? "bg-sky-500/25 text-sky-200 ring-1 ring-sky-400/60"
-                          : "text-zinc-300 bg-zinc-900/40 hover:bg-zinc-800/80 hover:text-white"
-                      }`}
-                      title={f.path}
+                      className="group flex items-center justify-between rounded bg-zinc-900/40 px-2 py-1 font-mono text-[11px] text-zinc-300 hover:bg-zinc-800 hover:text-white cursor-pointer"
+                      title={file.path}
                     >
-                      <span className="truncate">{f.path.split("/").pop()}</span>
-                      <span className="text-[10px] text-zinc-500">{f.lines}L</span>
+                      <span className="truncate pr-2">{file.path.split("/").pop()}</span>
+                      <span className="shrink-0 text-[10px] text-zinc-500">{role}</span>
                     </div>
                   );
                 })}
               </div>
             </div>
 
-            {/* External Inbound Dependencies */}
+            {/* Folder External Inbound */}
             {folderDeps.inbound.length > 0 && (
-              <div className="space-y-1.5">
+              <div className="space-y-1.5 border-t border-zinc-800/80 pt-3">
                 <span className="font-mono text-[10px] font-medium uppercase tracking-wider text-zinc-400">
                   External Inbound ({folderDeps.inbound.length})
                 </span>
@@ -632,7 +744,7 @@ export function DetailPane({
                   </span>
                 </div>
                 <span className="shrink-0 rounded bg-sky-500/15 border border-sky-400/30 px-2 py-0.5 font-mono text-[10px] font-medium text-sky-300">
-                  {repoSummary.framework}
+                  {frameworkTaxonomy.label}
                 </span>
               </div>
             </div>
@@ -649,8 +761,70 @@ export function DetailPane({
               </div>
               <div>
                 <span className="text-[10px] text-zinc-500 uppercase">Routes</span>
-                <div className="font-semibold text-purple-400">{repoSummary.routeCount}</div>
+                <div className="font-semibold text-purple-400">{data.routes?.length || 0}</div>
               </div>
+            </div>
+
+            {/* Phase 8: Extracted Route Table */}
+            <div className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-900/40 p-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <Globe className="h-3.5 w-3.5 text-sky-400 shrink-0" />
+                  <span className="font-mono text-xs font-semibold text-zinc-200">
+                    Route Table
+                  </span>
+                  <span className="rounded bg-zinc-800 px-1.5 py-0.2 font-mono text-[10px] text-zinc-400">
+                    {data.routes?.length || 0}
+                  </span>
+                </div>
+              </div>
+
+              {/* Filter search if more than 4 routes */}
+              {data.routes && data.routes.length > 4 && (
+                <input
+                  type="text"
+                  placeholder="Filter routes by path or method..."
+                  value={routeSearchQuery}
+                  onChange={(e) => setRouteSearchQuery(e.target.value)}
+                  className="w-full rounded bg-zinc-950 border border-zinc-800 px-2.5 py-1 text-xs font-mono text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-sky-500/50"
+                />
+              )}
+
+              {!data.routes || data.routes.length === 0 ? (
+                <div className="rounded border border-dashed border-zinc-800/80 p-3 text-center font-mono text-[11px] text-zinc-500">
+                  No HTTP routes detected in this codebase.
+                </div>
+              ) : (
+                <div className="max-h-56 overflow-y-auto overflow-x-hidden divide-y divide-zinc-800/60 border border-zinc-800/80 rounded bg-zinc-950/60 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-zinc-800">
+                  {filteredRoutes.map((route, idx) => {
+                    const fileName = route.file.split("/").pop() || route.file;
+                    return (
+                      <div
+                        key={`${route.method}-${route.path}-${idx}`}
+                        onClick={() => onSelectFile(route.file)}
+                        className="group flex items-center justify-between px-2.5 py-1.5 hover:bg-zinc-800/60 transition-colors cursor-pointer select-none"
+                        title={`File: ${route.file}\nClick to view and inspect file`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0 pr-2">
+                          <span
+                            className={`shrink-0 rounded px-1.5 py-0.2 font-mono text-[10px] font-bold uppercase ${getMethodBadgeClass(
+                              route.method
+                            )}`}
+                          >
+                            {route.method}
+                          </span>
+                          <span className="font-mono text-xs text-zinc-200 truncate group-hover:text-sky-300 transition-colors select-text">
+                            {route.path}
+                          </span>
+                        </div>
+                        <span className="shrink-0 font-mono text-[10px] text-zinc-500 group-hover:text-zinc-400 truncate max-w-[120px]">
+                          {fileName}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             {/* Convention identification status */}
@@ -659,7 +833,7 @@ export function DetailPane({
                 <FileQuestion className="h-3 w-3 text-zinc-500" />
                 <span>Unclassified modules</span>
               </div>
-              <span className="text-zinc-200 font-semibold">{repoSummary.unclassifiedCount}</span>
+              <span className="text-zinc-200 font-semibold">{unclassifiedCount}</span>
             </div>
 
             {/* PHASE 6: Insights Panel (Starts collapsed, never first thing you see) */}

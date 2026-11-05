@@ -113,7 +113,7 @@ export async function runAnalysisPipeline(options: PipelineRunOptions): Promise<
   }
 
   // Helper to update progress stage
-  async function updateStage(stage: PipelineStage, stageMessage: string, extra?: Record<string, any>) {
+  async function updateStage(stage: PipelineStage, stageMessage: string, extra?: Record<string, unknown>) {
     currentStage = stage;
     await supabase
       .from("analyses")
@@ -160,7 +160,7 @@ export async function runAnalysisPipeline(options: PipelineRunOptions): Promise<
       isExisting: false,
       status: "completed",
     };
-  } catch (err: any) {
+  } catch (err: unknown) {
     // Catch-all: Ensure failed state is recorded rather than stuck mid-parse
     const errorMessage = err instanceof Error ? err.message : String(err);
     await supabase

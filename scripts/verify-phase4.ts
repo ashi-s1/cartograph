@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { foldModules } from "../lib/canvas/folding.ts";
-import { getDeterministicLayout, computePanelDimensions } from "../lib/canvas/layout.ts";
+import { getDeterministicLayout } from "../lib/canvas/layout.ts";
 import type { ParserResult } from "../lib/parser/types.ts";
 
 const scaffoldPath = path.resolve("./lib/canvas/scaffold-data.json");

@@ -99,6 +99,12 @@ export function detectFramework(files: readonly ParsedFile[]): string {
   }
 
   if (
+    files.some((f) => f.path.endsWith(".controller.ts") || f.path.endsWith(".service.ts"))
+  ) {
+    return "NestJS";
+  }
+
+  if (
     lowerPaths.has("vite.config.ts") ||
     lowerPaths.has("vite.config.js") ||
     lowerPaths.has("vite.config.mts") ||
@@ -158,21 +164,30 @@ export interface RepoSummaryMetrics {
 export function computeRepoSummary(
   files: readonly ParsedFile[],
   edges: readonly ParsedEdge[],
-  repositoryRoot: string
+  repositoryRoot: string,
+  frameworkName?: string,
+  routesCount?: number,
+  unclassifiedFilesCount?: number
 ): RepoSummaryMetrics {
   const name = deriveRepoName(repositoryRoot);
-  const framework = detectFramework(files);
+  const framework = frameworkName || detectFramework(files);
 
-  let routeCount = 0;
-  let unclassifiedCount = 0;
+  let routeCount = routesCount ?? 0;
+  let unclassifiedCount = unclassifiedFilesCount ?? 0;
 
-  for (const f of files) {
-    const { kind } = classifyFile(f.path);
-    if (kind === "Route") {
-      routeCount++;
-    } else if (kind === "Unclassified Module") {
-      unclassifiedCount++;
+  if (routesCount === undefined || unclassifiedFilesCount === undefined) {
+    let calcRoutes = 0;
+    let calcUnclassified = 0;
+    for (const f of files) {
+      const { kind } = classifyFile(f.path);
+      if (kind === "Route") {
+        calcRoutes++;
+      } else if (kind === "Unclassified Module") {
+        calcUnclassified++;
+      }
     }
+    if (routesCount === undefined) routeCount = calcRoutes;
+    if (unclassifiedFilesCount === undefined) unclassifiedCount = calcUnclassified;
   }
 
   // 1. Most depended-on files (highest Fan-In)
@@ -204,21 +219,18 @@ export function computeRepoSummary(
  * Computes the exact distinct inbound and outbound file lists for a selected file.
  */
 export function computeFileDependencies(
-  filePath: string,
+  targetFilePath: string,
   edges: readonly ParsedEdge[]
-): {
-  inbound: string[];
-  outbound: string[];
-} {
+): { inbound: string[]; outbound: string[] } {
   const inboundSet = new Set<string>();
   const outboundSet = new Set<string>();
 
-  for (const edge of edges) {
-    if (edge.target === filePath && edge.source !== filePath) {
-      inboundSet.add(edge.source);
+  for (const e of edges) {
+    if (e.target === targetFilePath && e.source !== targetFilePath) {
+      inboundSet.add(e.source);
     }
-    if (edge.source === filePath && edge.target !== filePath) {
-      outboundSet.add(edge.target);
+    if (e.source === targetFilePath && e.target !== targetFilePath) {
+      outboundSet.add(e.target);
     }
   }
 
@@ -229,24 +241,15 @@ export function computeFileDependencies(
 }
 
 /**
- * Computes kind breakdown of files inside a folder node.
+ * Computes the file kind breakdown inside a folder.
  */
 export function computeFolderKindsBreakdown(
-  files: readonly ParsedFile[]
-): { kind: string; count: number; color: string }[] {
-  const counts = new Map<string, { count: number; color: string }>();
-
-  for (const f of files) {
-    const { kind, badgeColor } = classifyFile(f.path);
-    const existing = counts.get(kind);
-    if (existing) {
-      existing.count++;
-    } else {
-      counts.set(kind, { count: 1, color: badgeColor });
-    }
+  folderFiles: readonly ParsedFile[]
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const f of folderFiles) {
+    const { kind } = classifyFile(f.path);
+    counts[kind] = (counts[kind] || 0) + 1;
   }
-
-  return Array.from(counts.entries())
-    .map(([kind, data]) => ({ kind, count: data.count, color: data.color }))
-    .sort((a, b) => b.count - a.count);
+  return counts;
 }

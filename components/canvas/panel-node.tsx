@@ -5,24 +5,27 @@ import { Handle, Position, useUpdateNodeInternals } from "@xyflow/react";
 import { FolderOpen, X, FileCode } from "lucide-react";
 import type { FoldedNode } from "@/lib/canvas/folding";
 import type { ParsedFile } from "@/lib/parser/types";
-import { MAX_VISIBLE_PANEL_FILES, FILE_ROW_HEIGHT } from "@/lib/canvas/layout";
+
+const FILE_ROW_HEIGHT = 28;
+const MAX_VISIBLE_PANEL_FILES = 8;
 
 interface PanelNodeProps {
+  id: string;
   data: {
     node: FoldedNode;
-    isOpen: boolean;
-    onToggleOpen: (nodeId: string) => void;
-    onSelectNode: (nodeId: string) => void;
-    onSelectFile: (filePath: string) => void;
-    onHoverFile?: (filePath: string | null) => void;
+    onToggleOpen: (id: string) => void;
+    onSelectNode?: (id: string) => void;
+    onSelectFile: (path: string) => void;
+    onHoverFile?: (path: string | null) => void;
     selectedFilePath: string | null;
-    hoveredFilePath?: string | null;
+    hoveredFilePath: string | null;
     isDimmed: boolean;
     isSelected: boolean;
     isHighlighted: boolean;
     connectedFilePaths: Set<string>;
     filterCategory?: string | null;
     categoryMatchCount?: number;
+    fileRoles?: Record<string, string>;
   };
 }
 
@@ -42,61 +45,59 @@ export const PanelNodeComponent = memo(function PanelNodeComponent({
     connectedFilePaths,
     filterCategory,
     categoryMatchCount,
+    fileRoles,
   } = data;
 
   const updateNodeInternals = useUpdateNodeInternals();
   const scrollRafRef = React.useRef<number | null>(null);
 
   const handleScroll = () => {
-    if (scrollRafRef.current) return;
+    if (scrollRafRef.current !== null) {
+      cancelAnimationFrame(scrollRafRef.current);
+    }
     scrollRafRef.current = requestAnimationFrame(() => {
       updateNodeInternals(node.id);
       scrollRafRef.current = null;
     });
   };
 
-  const hiddenCount = Math.max(0, node.files.length - MAX_VISIBLE_PANEL_FILES);
-
   return (
     <div
-      className={`nodrag relative flex flex-col rounded-xl border bg-[#12141a] text-foreground shadow-2xl transition-all duration-200 select-none ${
+      className={`group/panel relative flex flex-col rounded-lg border bg-zinc-950/95 font-sans shadow-xl backdrop-blur-xs transition-opacity duration-150 ${
         isSelected
-          ? "border-sky-400 ring-2 ring-sky-400/50 shadow-sky-500/20"
+          ? "border-sky-400 ring-2 ring-sky-400/30"
           : isHighlighted
-          ? "border-sky-400/80 shadow-md shadow-sky-950/40"
+          ? "border-sky-400/80 ring-1 ring-sky-400/20"
           : "border-zinc-800 hover:border-zinc-700"
-      } ${
-        isDimmed ? "opacity-25 grayscale-[60%]" : "opacity-100"
-      }`}
+      } ${isDimmed ? "opacity-25 grayscale-[70%]" : "opacity-100"}`}
       style={{
-        width: node.width,
-        minWidth: 260,
+        width: 270,
+        minHeight: 80,
       }}
     >
-      {/* Node-level target handle for incoming module edges */}
+      {/* Node-level target handle for collapsed incoming edges */}
       <Handle
         type="target"
         position={Position.Left}
-        id="tgt-node"
-        className="!h-2 !w-2 !border-2 !border-background !bg-zinc-400"
+        id="panel-target"
+        className="!h-2 !w-2 !border-1 !border-background !bg-zinc-500 group-hover/panel:!bg-sky-400"
       />
 
-      {/* Node-level source handle for outgoing module edges */}
+      {/* Node-level source handle for collapsed outgoing edges */}
       <Handle
         type="source"
         position={Position.Right}
-        id="src-node"
-        className="!h-2 !w-2 !border-2 !border-background !bg-zinc-400"
+        id="panel-source"
+        className="!h-2 !w-2 !border-1 !border-background !bg-zinc-500 group-hover/panel:!bg-sky-400"
       />
 
-      {/* Header: Click to close back to single node */}
+      {/* Folder Header */}
       <div
         onClick={(e) => {
           e.stopPropagation();
-          onToggleOpen(node.id);
+          data.onSelectNode?.(node.id);
         }}
-        className="nodrag flex h-9 items-center justify-between border-b border-zinc-800 bg-zinc-900/60 px-3 cursor-pointer rounded-t-xl hover:bg-zinc-800/80 transition-colors"
-        title="Click to collapse panel"
+        className="flex items-center justify-between border-b border-zinc-800/80 bg-zinc-900/60 px-3 py-2 cursor-pointer select-none"
       >
         <div className="flex items-center gap-1.5 min-w-0">
           <FolderOpen className="h-3.5 w-3.5 text-sky-500 shrink-0" />
@@ -106,7 +107,7 @@ export const PanelNodeComponent = memo(function PanelNodeComponent({
           <span className="rounded bg-muted px-1.5 py-0.2 font-mono text-[10px] text-muted-foreground">
             {node.fileCount}
           </span>
-          {/* Phase 6: Category match count badge */}
+          {/* Category match count badge */}
           {filterCategory && categoryMatchCount !== undefined && (
             <span className="rounded bg-sky-500/20 border border-sky-400/40 px-1.5 py-0.2 font-mono text-[10px] font-semibold text-sky-300">
               {categoryMatchCount} {categoryMatchCount === 1 ? "match" : "matches"}
@@ -149,9 +150,11 @@ export const PanelNodeComponent = memo(function PanelNodeComponent({
           const isFileConnected = connectedFilePaths.has(file.path);
           const isRowHovered = hoveredFilePath === file.path;
 
-          // Phase 6 category matching check
+          // Framework role or extension matching check
+          const fileRole = fileRoles?.[file.path];
           const fileMatchesCategory =
             !filterCategory ||
+            (fileRole && fileRole.toLowerCase() === filterCategory.toLowerCase()) ||
             (file.path.includes(".") && `.${file.path.split(".").pop()}` === filterCategory) ||
             (!file.path.includes(".") && filterCategory === "other");
 
@@ -200,22 +203,18 @@ export const PanelNodeComponent = memo(function PanelNodeComponent({
                 <span className="truncate text-xs">{fileName}</span>
               </div>
 
-              <div className="flex items-center gap-1.5 shrink-0 text-[10px] text-zinc-500">
+              {/* Fan-in badge */}
+              {file.fanIn > 0 && (
                 <span
-                  className={
-                    isFileSelected ? "text-sky-950/80 font-medium" : "text-zinc-500"
-                  }
+                  className={`font-mono text-[10px] shrink-0 rounded px-1 ${
+                    isFileSelected
+                      ? "bg-sky-950/40 text-sky-200"
+                      : "bg-zinc-800 text-zinc-400 group-hover:text-zinc-200"
+                  }`}
                 >
-                  {file.lines}L
+                  {file.fanIn} in
                 </span>
-                <span
-                  className={
-                    isFileSelected ? "text-sky-950/80 font-medium" : "text-zinc-600"
-                  }
-                >
-                  in:{file.fanIn}
-                </span>
-              </div>
+              )}
 
               {/* Row-level source handle for outgoing import edges */}
               <Handle
@@ -228,15 +227,6 @@ export const PanelNodeComponent = memo(function PanelNodeComponent({
           );
         })}
       </div>
-
-      {/* Footer when files overflow max visible height */}
-      {hiddenCount > 0 && (
-        <div className="flex h-6 items-center justify-center border-t border-zinc-800/80 bg-zinc-950/50 px-2 font-mono text-[10px] text-muted-foreground rounded-b-xl">
-          <span>
-            +{hiddenCount} more {hiddenCount === 1 ? "file" : "files"} (scroll to view)
-          </span>
-        </div>
-      )}
     </div>
   );
 });

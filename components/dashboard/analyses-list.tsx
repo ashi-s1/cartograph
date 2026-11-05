@@ -16,7 +16,7 @@ export interface AnalysisSummary {
   files_count?: number;
   imports_count?: number;
   routes_count?: number;
-  coverage?: any;
+  coverage?: any /* eslint-disable-line @typescript-eslint/no-explicit-any */;
   error?: string;
 }
 
@@ -77,6 +77,7 @@ export function AnalysesList({ initialAnalyses, orgId }: AnalysesListProps) {
 
   // Keep synced with initialAnalyses when server revalidates
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setAnalyses(initialAnalyses);
   }, [initialAnalyses]);
 
@@ -96,7 +97,7 @@ export function AnalysesList({ initialAnalyses, orgId }: AnalysesListProps) {
       .on(
         "broadcast",
         { event: "stage_change" },
-        (eventPayload: { payload: any }) => {
+        (eventPayload: { payload: any /* eslint-disable-line @typescript-eslint/no-explicit-any */ }) => {
           const payload = eventPayload.payload;
           if (!payload?.analysis_id) return;
 

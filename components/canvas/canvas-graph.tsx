@@ -1,25 +1,28 @@
 "use client";
 
-import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   ReactFlow,
+  ReactFlowProvider,
   Background,
   Controls,
-  useReactFlow,
-  ReactFlowProvider,
   type Node,
   type Edge,
+  type NodeTypes,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-
-import { FoldedNodeComponent } from "./folded-node";
-import { PanelNodeComponent } from "./panel-node";
-import { foldModules, type FoldedNode } from "@/lib/canvas/folding";
-import { getDeterministicLayout } from "@/lib/canvas/layout";
 import type { ParserResult, ParsedFile } from "@/lib/parser/types";
-import type { HoverTarget } from "./detail-pane";
+import {
+  foldModules,
+  type FoldedNode,
+  type FoldingResult,
+} from "@/lib/canvas/folding";
+import { getDeterministicLayout } from "@/lib/canvas/layout";
+import { FoldedNodeComponent } from "@/components/canvas/folded-node";
+import { PanelNodeComponent } from "@/components/canvas/panel-node";
+import type { HoverTarget } from "@/components/canvas/detail-pane";
 
-const nodeTypes = {
+const nodeTypes: NodeTypes = {
   foldedNode: FoldedNodeComponent,
   panelNode: PanelNodeComponent,
 };
@@ -40,141 +43,104 @@ interface CanvasGraphProps {
 
 function CanvasGraphInner({
   data,
-  selectedNodeId: propSelectedNodeId,
-  selectedFilePath: propSelectedFilePath,
+  selectedNodeId = null,
+  selectedFilePath = null,
   filterCategory = null,
   hoveredTarget,
   onHoverTarget,
   onSelectionChange,
 }: CanvasGraphProps) {
-  const { fitView, getViewport } = useReactFlow();
+  // Local state for expanded folder panels
+  const [openNodeIds, setOpenNodeIds] = useState<Set<string>>(new Set());
 
-  // 1. Fold initial modules from parser data
-  const foldingResult = useMemo(() => {
+  // Framework role lookup for category filtering
+  const roleMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const r of data.roles || []) {
+      map.set(r.file, r.role);
+    }
+    return map;
+  }, [data.roles]);
+
+  const fileRolesRecord = useMemo(() => {
+    return Object.fromEntries(roleMap.entries());
+  }, [roleMap]);
+
+  // 1. Compute folder-based graph partitioning
+  const foldingResult: FoldingResult = useMemo(() => {
     return foldModules(data.files, data.edges);
   }, [data.files, data.edges]);
 
-  // Pre-indexed lookup maps for instant O(1) dependency resolution
+  // Active open node IDs includes any explicitly opened folder or the folder containing selectedFilePath
+  const activeOpenNodeIds = useMemo(() => {
+    const set = new Set(openNodeIds);
+    if (selectedFilePath) {
+      const targetFolderId = foldingResult.nodeToFileMapping.get(selectedFilePath);
+      if (targetFolderId) {
+        set.add(targetFolderId);
+      }
+    }
+    return set;
+  }, [openNodeIds, selectedFilePath, foldingResult.nodeToFileMapping]);
+
+  // 2. Pre-index edges and connections for fast lookup
   const edgeIndex = useMemo(() => {
-    const nodeEdges = new Map<string, string[]>();
     const nodeNeighbors = new Map<string, Set<string>>();
-    const fileEdges = new Map<string, string[]>();
+    const nodeEdges = new Map<string, string[]>();
     const fileNeighbors = new Map<string, Set<string>>();
+    const fileEdges = new Map<string, string[]>();
 
-    for (const edge of foldingResult.edges) {
-      // Source node index
-      if (!nodeEdges.has(edge.source)) nodeEdges.set(edge.source, []);
-      nodeEdges.get(edge.source)!.push(edge.id);
+    for (const edge of data.edges) {
+      const edgeId = `e-${edge.source}-${edge.target}-${edge.kind}`;
 
-      if (!nodeNeighbors.has(edge.source)) nodeNeighbors.set(edge.source, new Set());
-      nodeNeighbors.get(edge.source)!.add(edge.target);
+      // File-level index
+      if (!fileNeighbors.has(edge.source)) fileNeighbors.set(edge.source, new Set());
+      if (!fileNeighbors.has(edge.target)) fileNeighbors.set(edge.target, new Set());
+      fileNeighbors.get(edge.source)!.add(edge.target);
+      fileNeighbors.get(edge.target)!.add(edge.source);
 
-      // Target node index
-      if (!nodeEdges.has(edge.target)) nodeEdges.set(edge.target, []);
-      nodeEdges.get(edge.target)!.push(edge.id);
+      if (!fileEdges.has(edge.source)) fileEdges.set(edge.source, []);
+      if (!fileEdges.has(edge.target)) fileEdges.set(edge.target, []);
+      fileEdges.get(edge.source)!.push(edgeId);
+      fileEdges.get(edge.target)!.push(edgeId);
 
-      if (!nodeNeighbors.has(edge.target)) nodeNeighbors.set(edge.target, new Set());
-      nodeNeighbors.get(edge.target)!.add(edge.source);
+      // Node-level index
+      const srcNode = foldingResult.nodeToFileMapping.get(edge.source);
+      const tgtNode = foldingResult.nodeToFileMapping.get(edge.target);
 
-      // File index
-      if (!fileEdges.has(edge.sourceFile)) fileEdges.set(edge.sourceFile, []);
-      fileEdges.get(edge.sourceFile)!.push(edge.id);
+      if (srcNode && tgtNode && srcNode !== tgtNode) {
+        if (!nodeNeighbors.has(srcNode)) nodeNeighbors.set(srcNode, new Set());
+        if (!nodeNeighbors.has(tgtNode)) nodeNeighbors.set(tgtNode, new Set());
+        nodeNeighbors.get(srcNode)!.add(tgtNode);
+        nodeNeighbors.get(tgtNode)!.add(srcNode);
 
-      if (!fileNeighbors.has(edge.sourceFile)) fileNeighbors.set(edge.sourceFile, new Set());
-      fileNeighbors.get(edge.sourceFile)!.add(edge.targetFile);
-
-      if (!fileEdges.has(edge.targetFile)) fileEdges.set(edge.targetFile, []);
-      fileEdges.get(edge.targetFile)!.push(edge.id);
-
-      if (!fileNeighbors.has(edge.targetFile)) fileNeighbors.set(edge.targetFile, new Set());
-      fileNeighbors.get(edge.targetFile)!.add(edge.sourceFile);
-    }
-
-    return {
-      nodeEdges,
-      nodeNeighbors,
-      fileEdges,
-      fileNeighbors,
-    };
-  }, [foldingResult.edges]);
-
-  // 2. Open panels state (Set of nodeIds)
-  const [openNodeIds, setOpenNodeIds] = useState<Set<string>>(new Set());
-
-  // 3. Selection state
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(propSelectedNodeId ?? null);
-  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(propSelectedFilePath ?? null);
-
-  // Sync external selection changes
-  useEffect(() => {
-    if (propSelectedFilePath !== undefined) {
-      setSelectedFilePath(propSelectedFilePath);
-      if (propSelectedFilePath) {
-        // Automatically open the folder containing this file so its handle and row are visible
-        const ownerNodeId = foldingResult.nodeToFileMapping.get(propSelectedFilePath);
-        if (ownerNodeId) {
-          setOpenNodeIds((prev) => {
-            if (prev.has(ownerNodeId)) return prev;
-            const next = new Set(prev);
-            next.add(ownerNodeId);
-            return next;
-          });
-        }
+        const foldedEdgeId = `fe-${srcNode}-${tgtNode}`;
+        if (!nodeEdges.has(srcNode)) nodeEdges.set(srcNode, []);
+        if (!nodeEdges.has(tgtNode)) nodeEdges.set(tgtNode, []);
+        nodeEdges.get(srcNode)!.push(foldedEdgeId);
+        nodeEdges.get(tgtNode)!.push(foldedEdgeId);
       }
     }
-  }, [propSelectedFilePath, foldingResult.nodeToFileMapping]);
 
-  useEffect(() => {
-    if (propSelectedNodeId !== undefined) {
-      setSelectedNodeId(propSelectedNodeId);
-    }
-  }, [propSelectedNodeId]);
+    return { nodeNeighbors, nodeEdges, fileNeighbors, fileEdges };
+  }, [data.edges, foldingResult.nodeToFileMapping]);
 
-  // Debounce ref to prevent duplicate toggle in same tick
-  const lastToggleRef = useRef<{ id: string; time: number }>({ id: "", time: 0 });
-
-  // Toggle open a folder node into a panel or close it back
-  const handleToggleOpen = useCallback(
-    (nodeId: string) => {
-      const now = Date.now();
-      if (lastToggleRef.current.id === nodeId && now - lastToggleRef.current.time < 200) {
-        return;
+  // Toggle open/collapse state of a folder node
+  const handleToggleOpen = useCallback((nodeId: string) => {
+    setOpenNodeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) {
+        next.delete(nodeId);
+      } else {
+        next.add(nodeId);
       }
-      lastToggleRef.current = { id: nodeId, time: now };
+      return next;
+    });
+  }, []);
 
-      setOpenNodeIds((prev) => {
-        const next = new Set(prev);
-        if (next.has(nodeId)) {
-          next.delete(nodeId);
-        } else {
-          next.add(nodeId);
-        }
-        return next;
-      });
-
-      // Refit view safely: only zoom out, never in
-      setTimeout(() => {
-        try {
-          const currentZoom = getViewport().zoom;
-          fitView({
-            duration: 250,
-            maxZoom: Math.min(currentZoom, 1),
-            padding: 0.15,
-          });
-        } catch {
-          // fallback
-        }
-      }, 50);
-    },
-    [fitView, getViewport]
-  );
-
-  // Select node
+  // Handle folder node selection
   const handleSelectNode = useCallback(
     (nodeId: string) => {
-      setSelectedNodeId(nodeId);
-      setSelectedFilePath(null);
-
       const node = foldingResult.nodes.find((n) => n.id === nodeId) || null;
       onSelectionChange?.({
         type: "node",
@@ -185,17 +151,14 @@ function CanvasGraphInner({
     [foldingResult.nodes, onSelectionChange]
   );
 
-  // Select file row inside a panel
+  // Handle individual file selection
   const handleSelectFile = useCallback(
     (filePath: string) => {
-      setSelectedFilePath(filePath);
-      setSelectedNodeId(null);
-
       const file = data.files.find((f) => f.path === filePath) || null;
       onSelectionChange?.({
         type: "file",
-        node: null,
         file,
+        node: null,
       });
     },
     [data.files, onSelectionChange]
@@ -214,8 +177,6 @@ function CanvasGraphInner({
 
   // Clear selection on background click
   const handlePaneClick = useCallback(() => {
-    setSelectedNodeId(null);
-    setSelectedFilePath(null);
     onSelectionChange?.({ type: null });
   }, [onSelectionChange]);
 
@@ -277,6 +238,10 @@ function CanvasGraphInner({
             highlightedEdgeIds.add(edges[i]);
           }
         }
+        const neighbors = edgeIndex.fileNeighbors.get(hoveredTarget.id);
+        if (neighbors) {
+          neighbors.forEach((fpath) => highlightedFilePaths.add(fpath));
+        }
       } else if (hoveredTarget.type === "node") {
         highlightedNodeIds.add(hoveredTarget.id);
         const edges = edgeIndex.nodeEdges.get(hoveredTarget.id);
@@ -284,6 +249,10 @@ function CanvasGraphInner({
           for (let i = 0; i < edges.length; i++) {
             highlightedEdgeIds.add(edges[i]);
           }
+        }
+        const neighbors = edgeIndex.nodeNeighbors.get(hoveredTarget.id);
+        if (neighbors) {
+          neighbors.forEach((nid) => highlightedNodeIds.add(nid));
         }
       }
     }
@@ -301,9 +270,9 @@ function CanvasGraphInner({
     return getDeterministicLayout(
       foldingResult.nodes,
       foldingResult.edges,
-      openNodeIds
+      activeOpenNodeIds
     );
-  }, [foldingResult.nodes, foldingResult.edges, openNodeIds]);
+  }, [foldingResult.nodes, foldingResult.edges, activeOpenNodeIds]);
 
   // Apply interactivity, dimming, and custom handlers to layouted nodes
   const nodes: Node[] = useMemo(() => {
@@ -312,9 +281,11 @@ function CanvasGraphInner({
       const isHighlighted = selectionInfo.highlightedNodeIds.has(n.id);
       const folderNode = n.data.node as FoldedNode;
 
-      // Phase 6: Category matching count and dimming
+      // Category matching count and dimming
       const categoryMatchCount = filterCategory
         ? folderNode.files.filter((f) => {
+            const role = roleMap.get(f.path);
+            if (role && role.toLowerCase() === filterCategory.toLowerCase()) return true;
             const ext = f.path.includes(".") ? `.${f.path.split(".").pop()}` : "other";
             return ext === filterCategory;
           }).length
@@ -327,7 +298,7 @@ function CanvasGraphInner({
         (selectionInfo.isSomethingSelected && !isSelected && !isHighlighted) ||
         (!selectionInfo.isSomethingSelected && isCategoryDimmed);
 
-      const isOpen = openNodeIds.has(n.id);
+      const isOpen = activeOpenNodeIds.has(n.id);
       const isHovered = hoveredTarget?.type === "node" && hoveredTarget.id === n.id;
 
       // Node z-index: Expanded panels always sit above edges and folded nodes
@@ -356,6 +327,7 @@ function CanvasGraphInner({
           connectedFilePaths: selectionInfo.highlightedFilePaths,
           filterCategory,
           categoryMatchCount,
+          fileRoles: fileRolesRecord,
         },
       };
     });
@@ -364,13 +336,15 @@ function CanvasGraphInner({
     selectedNodeId,
     selectedFilePath,
     selectionInfo,
-    openNodeIds,
+    activeOpenNodeIds,
     hoveredTarget,
     filterCategory,
     handleToggleOpen,
     handleSelectNode,
     handleSelectFile,
     onHoverTarget,
+    roleMap,
+    fileRolesRecord,
   ]);
 
   // Apply highlighting and dimming to edges (instant style, no expensive array sort or transitions)

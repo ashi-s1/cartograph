@@ -32,7 +32,7 @@ export function RepoSubmitForm() {
 
       // Navigate to the analysis progress/view page
       router.push(`/analyses/${data.analysisId}`);
-    } catch (err: any) {
+    } catch (err: any) /* eslint-disable-line @typescript-eslint/no-explicit-any */ {
       setError(err.message || "An unexpected error occurred");
       setLoading(false);
     }

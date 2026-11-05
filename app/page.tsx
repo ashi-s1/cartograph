@@ -31,12 +31,12 @@ async function OrgWorkspaceContent() {
     `)
     .order("created_at", { ascending: false });
 
-  const rawRows = rawAnalyses as any[] | null;
+  const rawRows = (rawAnalyses as unknown as AnalysisRecord[]) ?? [];
   const analyses: AnalysisRecord[] =
-    rawRows?.map((row) => ({
+    rawRows.map((row) => ({
       ...row,
       project: Array.isArray(row.project) ? row.project[0] ?? null : row.project,
-    })) ?? [];
+    }));
 
   return (
     <>

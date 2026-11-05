@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
     let parsed;
     try {
       parsed = parseGitHubUrl(repositoryUrl);
-    } catch (err: any) {
+    } catch (err: any) /* eslint-disable-line @typescript-eslint/no-explicit-any */ {
       return NextResponse.json(
         { error: err.message || "Invalid GitHub repository URL" },
         { status: 400 }
@@ -150,7 +150,7 @@ export async function POST(req: NextRequest) {
       isExisting: false,
       status: "running",
     });
-  } catch (error: any) {
+  } catch (error: any) /* eslint-disable-line @typescript-eslint/no-explicit-any */ {
     console.error("Error in /api/analyses:", error);
     return NextResponse.json(
       { error: error?.message || "Internal server error" },

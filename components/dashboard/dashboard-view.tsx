@@ -19,7 +19,7 @@ export interface AnalysisRecord {
   stage_message?: string | null;
   error_message?: string | null;
   commit_sha?: string | null;
-  summary: any | null;
+  summary: any /* eslint-disable-line @typescript-eslint/no-explicit-any */ | null;
   created_at: string;
   completed_at: string | null;
   project: ProjectInfo | null;
@@ -66,6 +66,7 @@ export function DashboardView({
   const [, startTransition] = useTransition();
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setAnalyses(initialAnalyses);
   }, [initialAnalyses]);
 
@@ -85,7 +86,7 @@ export function DashboardView({
       .on(
         "broadcast",
         { event: "stage_change" },
-        (eventPayload: { payload: any }) => {
+        (eventPayload: { payload: any /* eslint-disable-line @typescript-eslint/no-explicit-any */ }) => {
           const payload = eventPayload.payload;
           if (!payload?.analysis_id) return;
 
@@ -141,7 +142,7 @@ export function DashboardView({
       }
 
       router.push(`/analyses/${data.analysisId}`);
-    } catch (err: any) {
+    } catch (err: any /* eslint-disable-line @typescript-eslint/no-explicit-any */) {
       setError(err.message || "An unexpected error occurred");
       setSubmitting(false);
     }

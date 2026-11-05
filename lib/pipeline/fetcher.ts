@@ -63,6 +63,7 @@ export async function fetchRepoArchive(repoUrl: string): Promise<{
         stdio: ["pipe", "pipe", "pipe"],
       });
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       Readable.fromWeb(response.body as any).pipe(tarProc.stdin);
 
       tarProc.on("close", () => {
@@ -102,7 +103,7 @@ export async function fetchRepoArchive(repoUrl: string): Promise<{
       const arrayBuffer = await fallbackRes.arrayBuffer();
       fs.writeFileSync(archivePath, Buffer.from(arrayBuffer));
       execSync(`tar -xzf "${archivePath}" -C "${tempDir}"`, { stdio: "pipe" });
-    } catch (fallbackErr: any) {
+    } catch (fallbackErr: unknown) {
       const entries = fs.existsSync(tempDir) ? fs.readdirSync(tempDir) : [];
       const hasExtracted = entries.some((e) => {
         try {
@@ -113,7 +114,7 @@ export async function fetchRepoArchive(repoUrl: string): Promise<{
       });
       if (!hasExtracted) {
         fs.rmSync(tempDir, { recursive: true, force: true });
-        throw new Error(`Failed to extract repository archive: ${fallbackErr.message}`);
+        throw new Error(`Failed to extract repository archive: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`);
       }
     } finally {
       if (fs.existsSync(archivePath)) {

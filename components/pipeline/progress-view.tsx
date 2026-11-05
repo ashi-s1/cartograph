@@ -85,7 +85,7 @@ export function ProgressView({ analysis }: { analysis: ProgressAnalysisProps }) 
       setCurrentStage("fetching");
       setStageMessage("Downloading repository archive from GitHub");
       setElapsedSeconds(0);
-    } catch (err: any) {
+    } catch (err: any) /* eslint-disable-line @typescript-eslint/no-explicit-any */ {
       setErrorMessage(err.message || "Failed to retry analysis");
     } finally {
       setIsRetrying(false);
@@ -112,7 +112,7 @@ export function ProgressView({ analysis }: { analysis: ProgressAnalysisProps }) 
       .on(
         "broadcast",
         { event: "stage_change" },
-        (eventPayload: { payload: any }) => {
+        (eventPayload: { payload: any /* eslint-disable-line @typescript-eslint/no-explicit-any */ }) => {
           const payload = eventPayload.payload;
           if (!payload) return;
 

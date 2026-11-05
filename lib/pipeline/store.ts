@@ -12,9 +12,11 @@ export interface StoreAnalysisOptions {
 }
 
 export async function storeAnalysisResults(options: StoreAnalysisOptions): Promise<void> {
-  const { supabase, orgId, projectId, analysisId, parserResult, commitSha } = options;
+  const { supabase, orgId, analysisId, parserResult, commitSha } = options;
 
-  // Clean up any stale files or edges if re-running an analysis
+  // Clean up any stale records if re-running an analysis
+  await supabase.from("routes").delete().eq("analysis_id", analysisId);
+  await supabase.from("file_roles").delete().eq("analysis_id", analysisId);
   await supabase.from("edges").delete().eq("analysis_id", analysisId);
   await supabase.from("files").delete().eq("analysis_id", analysisId);
 
@@ -78,11 +80,63 @@ export async function storeAnalysisResults(options: StoreAnalysisOptions): Promi
     }
   }
 
-  // 3. Mark analysis as completed with summary metrics
+  // 3. Prepare and insert routes
+  if (parserResult.routes.length > 0) {
+    const routeRows = parserResult.routes.map((route) => {
+      const fileId = fileIdMap.get(route.file) || null;
+      return {
+        id: crypto.randomUUID(),
+        org_id: orgId,
+        analysis_id: analysisId,
+        file_id: fileId,
+        method: route.method,
+        path: route.path,
+      };
+    });
+
+    const ROUTE_BATCH_SIZE = 500;
+    for (let i = 0; i < routeRows.length; i += ROUTE_BATCH_SIZE) {
+      const batch = routeRows.slice(i, i + ROUTE_BATCH_SIZE);
+      const { error: routesError } = await supabase.from("routes").insert(batch);
+      if (routesError) {
+        throw new Error(`Failed to store routes: ${routesError.message}`);
+      }
+    }
+  }
+
+  // 4. Prepare and insert file roles
+  if (parserResult.roles.length > 0) {
+    const roleRows = parserResult.roles
+      .map((r) => {
+        const fileId = fileIdMap.get(r.file);
+        if (!fileId) return null;
+        return {
+          id: crypto.randomUUID(),
+          org_id: orgId,
+          analysis_id: analysisId,
+          file_id: fileId,
+          role: r.role,
+          confidence: r.confidence ?? 1.0,
+        };
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null);
+
+    const ROLE_BATCH_SIZE = 500;
+    for (let i = 0; i < roleRows.length; i += ROLE_BATCH_SIZE) {
+      const batch = roleRows.slice(i, i + ROLE_BATCH_SIZE);
+      const { error: rolesError } = await supabase.from("file_roles").insert(batch);
+      if (rolesError) {
+        throw new Error(`Failed to store file roles: ${rolesError.message}`);
+      }
+    }
+  }
+
+  // 5. Mark analysis as completed with summary metrics
   const summary = {
+    framework: parserResult.framework,
     files_count: parserResult.files.length,
     imports_count: parserResult.edges.length,
-    routes_count: 0,
+    routes_count: parserResult.routes.length,
     coverage: parserResult.coverage,
   };
 
@@ -102,4 +156,3 @@ export async function storeAnalysisResults(options: StoreAnalysisOptions): Promi
     throw new Error(`Failed to finalize analysis status: ${updateError.message}`);
   }
 }
-

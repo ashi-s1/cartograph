@@ -8,6 +8,7 @@ import { CanvasGraph } from "@/components/canvas/canvas-graph";
 import { DetailPane, type HoverTarget, type DetailPaneSelection } from "@/components/canvas/detail-pane";
 import { CoverageBanner } from "@/components/canvas/coverage-banner";
 import type { ParserResult } from "@/lib/parser/types";
+import { getTaxonomyCategories, type FrameworkType } from "@/lib/taxonomy";
 import { RotateCw, GitCommit, ArrowLeft } from "lucide-react";
 
 interface AnalysisExplorerProps {
@@ -18,23 +19,11 @@ interface AnalysisExplorerProps {
   analysisId?: string;
 }
 
-const EXTENSION_COLORS: Record<string, string> = {
-  ".ts": "#818cf8",
-  ".tsx": "#38bdf8",
-  ".js": "#facc15",
-  ".jsx": "#fb923c",
-  ".mts": "#c084fc",
-  ".cjs": "#f472b6",
-  ".json": "#34d399",
-  ".css": "#60a5fa",
-};
-
 export function AnalysisExplorer({
   initialData,
   repoName = initialData.repositoryRoot,
   commitSha = null,
   repositoryUrl = null,
-  analysisId,
 }: AnalysisExplorerProps) {
   const router = useRouter();
   const [isRerunning, startRerunTransition] = useTransition();
@@ -59,23 +48,40 @@ export function AnalysisExplorer({
     });
   }, []);
 
-  // Derive file categories for left rail
+  // Derive framework-specific categories for left rail in fixed reading order
   const categories = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const f of initialData.files) {
-      const ext = f.path.includes(".") ? `.${f.path.split(".").pop()}` : "other";
-      counts.set(ext, (counts.get(ext) || 0) + 1);
+    const framework = (initialData.framework as FrameworkType) || "fallback";
+    const taxonomyCategories = getTaxonomyCategories(framework);
+
+    const roleCounts = new Map<string, number>();
+    for (const r of initialData.roles || []) {
+      roleCounts.set(r.role, (roleCounts.get(r.role) || 0) + 1);
     }
 
-    return Array.from(counts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([ext, count]) => ({
-        id: ext,
-        name: ext,
-        color: EXTENSION_COLORS[ext] || "#94a3b8",
-        count,
-      }));
-  }, [initialData.files]);
+    // Keep categories in their exact fixed reading order
+    const result = taxonomyCategories
+      .map((cat) => ({
+        id: cat.name,
+        name: cat.name,
+        color: cat.color,
+        count: roleCounts.get(cat.name) || 0,
+      }))
+      .filter((cat) => cat.count > 0);
+
+    // If no framework roles were populated, fall back to generic
+    if (result.length === 0) {
+      return [
+        {
+          id: "Generic",
+          name: "Generic",
+          color: "#94a3b8",
+          count: initialData.files.length,
+        },
+      ];
+    }
+
+    return result;
+  }, [initialData.framework, initialData.roles, initialData.files.length]);
 
   // Navigate selection when clicking a file in DetailPane
   const handleSelectFile = useCallback(

@@ -267,6 +267,9 @@ function generateScaffoldData(): ParserResult {
     },
     distinctFoldersCount: folders.length,
     folders,
+    framework: "fallback",
+    routes: [],
+    roles: [],
   };
 }
 

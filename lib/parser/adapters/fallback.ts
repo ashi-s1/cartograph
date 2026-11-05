@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { ExtractedRoute } from "../types.ts";
 import type { FrameworkAdapter } from "./types.ts";
 
 const CODE_EXTENSIONS = new Set([
@@ -26,14 +27,13 @@ const IGNORED_DIRECTORIES = new Set([
 
 /**
  * Fallback framework adapter: assumes no framework at all.
- * Treats standard TypeScript and JavaScript files as modules.
+ * Roles are generic and route table is empty.
  */
 export class FallbackAdapter implements FrameworkAdapter {
   readonly name = "fallback";
 
   isCodeModule(relativePath: string): boolean {
     const ext = path.extname(relativePath).toLowerCase();
-    // Exclude ambient declaration files (.d.ts) from module graph as they contain no executable code/runtime imports
     if (relativePath.endsWith(".d.ts")) {
       return false;
     }
@@ -48,5 +48,13 @@ export class FallbackAdapter implements FrameworkAdapter {
       }
     }
     return { ignored: false };
+  }
+
+  classifyFile(): string {
+    return "Generic";
+  }
+
+  extractRoutes(): ExtractedRoute[] {
+    return [];
   }
 }

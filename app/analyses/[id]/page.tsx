@@ -4,7 +4,7 @@ import { createClerkSupabaseServerClient } from "@/lib/supabase/server";
 import { AppShell } from "@/components/app-shell";
 import { ProgressView } from "@/components/pipeline/progress-view";
 import { AnalysisExplorer } from "@/components/canvas/analysis-explorer";
-import type { ParserResult, ParsedFile, ParsedEdge } from "@/lib/parser/types";
+import type { ParserResult, ParsedFile, ParsedEdge, ExtractedRoute, FileRole } from "@/lib/parser/types";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -55,8 +55,13 @@ async function AnalysisContent({ params }: PageProps) {
     return <ProgressView analysis={progressProps} />;
   }
 
-  // 3. If completed, load the stored files and edges for this analysis
-  const [{ data: rawFiles }, { data: rawEdges }] = await Promise.all([
+  // 3. If completed, load the stored files, edges, routes, and file roles
+  const [
+    { data: rawFiles },
+    { data: rawEdges },
+    { data: rawRoutes },
+    { data: rawRoles },
+  ] = await Promise.all([
     supabase
       .from("files")
       .select("id, path, folder, lines, bytes, hash, fan_in, fan_out")
@@ -66,10 +71,20 @@ async function AnalysisContent({ params }: PageProps) {
       .from("edges")
       .select("source_file_id, target_file_id, target_path, kind")
       .eq("analysis_id", id),
+    supabase
+      .from("routes")
+      .select("id, file_id, method, path")
+      .eq("analysis_id", id),
+    supabase
+      .from("file_roles")
+      .select("file_id, role, confidence")
+      .eq("analysis_id", id),
   ]);
 
   const filesList = rawFiles || [];
   const edgesList = rawEdges || [];
+  const routesList = rawRoutes || [];
+  const rolesList = rawRoles || [];
 
   // Map file IDs to relative paths
   const fileIdToPath = new Map<string, string>();
@@ -94,11 +109,23 @@ async function AnalysisContent({ params }: PageProps) {
     specifier: e.target_path || "",
   }));
 
+  const routes: ExtractedRoute[] = routesList.map((r) => ({
+    file: (r.file_id ? fileIdToPath.get(r.file_id) : "") || "",
+    method: r.method,
+    path: r.path,
+  }));
+
+  const roles: FileRole[] = rolesList.map((r) => ({
+    file: fileIdToPath.get(r.file_id) || "",
+    role: r.role,
+    confidence: Number(r.confidence || 1.0),
+  }));
+
   const folderSet = new Set(files.map((f) => f.folder));
   const folders = Array.from(folderSet).sort();
 
-  const summary = (analysis.summary as any) || {};
-  const coverage = summary.coverage || {
+  const summary = (analysis.summary as Record<string, unknown>) || {};
+  const coverage = (summary.coverage as ParserResult["coverage"]) || {
     totalImports: edges.length,
     resolved: edges.length,
     external: 0,
@@ -112,6 +139,7 @@ async function AnalysisContent({ params }: PageProps) {
   const parserResult: ParserResult = {
     repositoryRoot: project?.name || "",
     timestamp: analysis.completed_at || analysis.created_at,
+    framework: (summary.framework as string) || "fallback",
     walk: {
       found: files.length,
       parsed: files.length,
@@ -123,6 +151,8 @@ async function AnalysisContent({ params }: PageProps) {
     coverage,
     distinctFoldersCount: folders.length,
     folders,
+    routes,
+    roles,
   };
 
   return (

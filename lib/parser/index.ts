@@ -1,6 +1,6 @@
 import path from "node:path";
-import { Project, SyntaxKind, type SourceFile, type CallExpression, type StringLiteral } from "ts-morph";
-import { FallbackAdapter } from "./adapters/fallback.ts";
+import { Project, SyntaxKind, type CallExpression, type StringLiteral } from "ts-morph";
+import { detectFrameworkAdapter } from "./adapters/detector.ts";
 import type { FrameworkAdapter } from "./adapters/types.ts";
 import { walkRepository } from "./walker.ts";
 import { ModuleResolver } from "./resolver.ts";
@@ -10,6 +10,8 @@ import type {
   ParsedEdge,
   CoverageReport,
   UnresolvedExample,
+  ExtractedRoute,
+  FileRole,
 } from "./types.ts";
 
 function normalizePosix(p: string): string {
@@ -28,7 +30,7 @@ export interface ParseOptions {
  */
 export function parseRepository(options: ParseOptions): ParserResult {
   const rootDir = path.resolve(options.rootDir);
-  const adapter = options.adapter ?? new FallbackAdapter();
+  const adapter = options.adapter ?? detectFrameworkAdapter(rootDir);
 
   // 1. Walk repository and gather modules
   const { codeFiles, report: walkReport } = walkRepository(rootDir, adapter);
@@ -53,6 +55,9 @@ export function parseRepository(options: ParseOptions): ParserResult {
   }
 
   const rawEdges: ParsedEdge[] = [];
+  const routes: ExtractedRoute[] = [];
+  const roles: FileRole[] = [];
+
   let totalImports = 0;
   let resolvedCount = 0;
   let externalCount = 0;
@@ -144,6 +149,22 @@ export function parseRepository(options: ParseOptions): ParserResult {
         }
       }
     }
+
+    // D. Framework Role Classification
+    const roleName = adapter.classifyFile ? adapter.classifyFile(sourceFileRel, sourceFile) || "Generic" : "Generic";
+    roles.push({
+      file: sourceFileRel,
+      role: roleName,
+      confidence: 1.0,
+    });
+
+    // E. Framework Route Extraction
+    if (adapter.extractRoutes) {
+      const extracted = adapter.extractRoutes(sourceFileRel, sourceFile);
+      for (const r of extracted) {
+        routes.push(r);
+      }
+    }
   }
 
   // 4. Deduplicate edges and compute graph metrics (pure functions)
@@ -168,11 +189,14 @@ export function parseRepository(options: ParseOptions): ParserResult {
   return {
     repositoryRoot: rootDir,
     timestamp: new Date().toISOString(),
+    framework: adapter.name,
     walk: walkReport,
     files,
     edges,
     coverage,
     distinctFoldersCount: folders.length,
     folders,
+    routes,
+    roles,
   };
 }

@@ -5,6 +5,7 @@ import type { FrameworkAdapter } from "./adapters/types.ts";
 import { walkRepository } from "./walker.ts";
 import { ModuleResolver } from "./resolver.ts";
 import { computeFanMetrics, deduplicateEdges } from "./graph.ts";
+import { readModuleExports } from "./exports.ts";
 import type {
   ParserResult,
   ParsedEdge,
@@ -57,6 +58,7 @@ export function parseRepository(options: ParseOptions): ParserResult {
   const rawEdges: ParsedEdge[] = [];
   const routes: ExtractedRoute[] = [];
   const roles: FileRole[] = [];
+  const fileExportsMap = new Map<string, string[]>();
 
   let totalImports = 0;
   let resolvedCount = 0;
@@ -135,7 +137,7 @@ export function parseRepository(options: ParseOptions): ParserResult {
       }
     }
 
-    // C. Dynamic Imports: import('...') with string literal argument
+    // C. Call Expressions: dynamic import('...') and CommonJS require('...')
     const callExpressions = sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression) as CallExpression[];
     for (const callExpr of callExpressions) {
       const expr = callExpr.getExpression();
@@ -147,10 +149,25 @@ export function parseRepository(options: ParseOptions): ParserResult {
           const line = callExpr.getStartLineNumber();
           handleImport(sourceFileRel, specifier, "dynamic_import", line);
         }
+      } else if (
+        expr.getKind() === SyntaxKind.Identifier &&
+        expr.getText() === "require"
+      ) {
+        const args = callExpr.getArguments();
+        if (args.length > 0 && args[0].getKind() === SyntaxKind.StringLiteral) {
+          const stringLiteral = args[0] as StringLiteral;
+          const specifier = stringLiteral.getLiteralValue();
+          const line = callExpr.getStartLineNumber();
+          handleImport(sourceFileRel, specifier, "import", line);
+        }
       }
     }
 
-    // D. Framework Role Classification
+    // D. Extract Export Names
+    const exportedNames = readModuleExports(sourceFile);
+    fileExportsMap.set(sourceFileRel, exportedNames);
+
+    // E. Framework Role Classification
     const roleName = adapter.classifyFile ? adapter.classifyFile(sourceFileRel, sourceFile) || "Generic" : "Generic";
     roles.push({
       file: sourceFileRel,
@@ -158,7 +175,7 @@ export function parseRepository(options: ParseOptions): ParserResult {
       confidence: 1.0,
     });
 
-    // E. Framework Route Extraction
+    // F. Framework Route Extraction
     if (adapter.extractRoutes) {
       const extracted = adapter.extractRoutes(sourceFileRel, sourceFile);
       for (const r of extracted) {
@@ -169,7 +186,11 @@ export function parseRepository(options: ParseOptions): ParserResult {
 
   // 4. Deduplicate edges and compute graph metrics (pure functions)
   const edges = deduplicateEdges(rawEdges);
-  const files = computeFanMetrics(codeFiles, edges);
+  const filesWithExports = codeFiles.map((f) => ({
+    ...f,
+    exports: fileExportsMap.get(f.path) || [],
+  }));
+  const files = computeFanMetrics(filesWithExports, edges);
 
   // 5. Gather distinct folders
   const folderSet = new Set(files.map((f) => f.folder));

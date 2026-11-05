@@ -27,6 +27,8 @@ export interface ParsedFile {
   fanIn: number;
   /** Number of distinct repository files imported by this file */
   fanOut: number;
+  /** Names exported by this module (ESM or CommonJS) */
+  exports?: string[];
 }
 
 export type CoverageStatus = "resolved" | "external" | "excluded" | "unresolved";

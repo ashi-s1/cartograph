@@ -10,7 +10,7 @@
  *    then the layers behind them, then plumbing.
  */
 
-export type FrameworkType = "nextjs" | "nestjs" | "react" | "fallback";
+export type FrameworkType = "nextjs" | "nestjs" | "express" | "react" | "fallback";
 
 export interface CategoryDefinition {
   id: string;
@@ -49,6 +49,20 @@ export const FRAMEWORK_TAXONOMIES: Record<FrameworkType, FrameworkTaxonomy> = {
       { id: "Services", name: "Services", color: "#34d399" },
       { id: "Modules", name: "Modules", color: "#c084fc" },
       { id: "Entities", name: "Entities", color: "#fb923c" },
+      { id: "Generic", name: "Generic", color: "#64748b" },
+    ],
+  },
+  express: {
+    id: "express",
+    label: "Express",
+    categories: [
+      { id: "Routes", name: "Routes", color: "#38bdf8" },
+      { id: "Controllers", name: "Controllers", color: "#34d399" },
+      { id: "Middleware", name: "Middleware", color: "#c084fc" },
+      { id: "Services", name: "Services", color: "#facc15" },
+      { id: "Models", name: "Models", color: "#fb923c" },
+      { id: "Utilities", name: "Utilities", color: "#818cf8" },
+      { id: "Config", name: "Config", color: "#94a3b8" },
       { id: "Generic", name: "Generic", color: "#64748b" },
     ],
   },

@@ -3,13 +3,14 @@ import path from "node:path";
 import type { FrameworkAdapter } from "./types.ts";
 import { NextAdapter } from "./next.ts";
 import { NestAdapter } from "./nest.ts";
+import { ExpressAdapter } from "./express.ts";
 import { ReactAdapter } from "./react.ts";
 import { FallbackAdapter } from "./fallback.ts";
 
 /**
  * Detects the framework adapter for a repository.
  * Constraint: Detection runs in a fixed order and the first match wins.
- * Order: Next.js -> NestJS -> React -> Fallback
+ * Order: Next.js -> NestJS -> Express -> React -> Fallback
  */
 export function detectFrameworkAdapter(rootDir: string): FrameworkAdapter {
   let pkgDeps: Record<string, string> = {};
@@ -48,12 +49,18 @@ export function detectFrameworkAdapter(rootDir: string): FrameworkAdapter {
     return new NestAdapter();
   }
 
-  // 3. Standalone React detection
+  // 3. Express detection
+  const hasExpressDep = Boolean(pkgDeps["express"]);
+  if (hasExpressDep) {
+    return new ExpressAdapter();
+  }
+
+  // 4. Standalone React detection
   const hasReactDep = Boolean(pkgDeps["react"]);
   if (hasReactDep) {
     return new ReactAdapter();
   }
 
-  // 4. Fallback (generic roles, empty route table)
+  // 5. Fallback (generic roles, empty route table)
   return new FallbackAdapter();
 }

@@ -24,6 +24,8 @@ const IGNORED_DIRECTORIES = new Set([
   ".gemini",
   ".agents",
   ".pnpm-store",
+  "excalidraw",
+  "test-fixtures",
 ]);
 
 const NEST_HTTP_DECORATORS = new Map<string, string>([

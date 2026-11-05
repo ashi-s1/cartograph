@@ -24,6 +24,8 @@ const IGNORED_DIRECTORIES = new Set([
   ".gemini",
   ".agents",
   ".pnpm-store",
+  "excalidraw",
+  "test-fixtures",
 ]);
 
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]);

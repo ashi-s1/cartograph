@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { auth } from "@clerk/nextjs/server";
+import { auth, createClerkClient } from "@clerk/nextjs/server";
 import { env } from "@/lib/env";
 
 /**
@@ -35,6 +35,53 @@ export async function createClerkSupabaseServerClient() {
     {
       global: {
         headers,
+      },
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    }
+  );
+}
+
+/**
+ * Creates a job-authenticated Supabase client that dynamically refreshes tokens
+ * for the full duration of a background task while preserving organization isolation.
+ */
+export function createJobSupabaseServerClient(options: {
+  sessionId?: string | null;
+  orgId: string;
+  initialToken?: string | null;
+}) {
+  const { sessionId, orgId, initialToken } = options;
+  const clerk = createClerkClient({ secretKey: env.CLERK_SECRET_KEY });
+
+  return createClient(
+    env.NEXT_PUBLIC_SUPABASE_URL,
+    env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    {
+      global: {
+        headers: {
+          "x-organization-id": orgId,
+          ...(initialToken ? { Authorization: `Bearer ${initialToken}` } : {}),
+        },
+      },
+      accessToken: async () => {
+        if (!sessionId) {
+          return initialToken || "";
+        }
+        try {
+          const res = await clerk.sessions.getToken(sessionId, "supabase");
+          return (res as { raw?: string }).raw || initialToken || "";
+        } catch {
+          try {
+            const res = await clerk.sessions.getToken(sessionId);
+            return (res as { raw?: string }).raw || initialToken || "";
+          } catch {
+            return initialToken || "";
+          }
+        }
       },
       auth: {
         persistSession: false,

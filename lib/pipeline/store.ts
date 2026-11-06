@@ -9,16 +9,46 @@ export interface StoreAnalysisOptions {
   analysisId: string;
   parserResult: ParserResult;
   commitSha: string;
+  claimId?: string;
 }
 
 export async function storeAnalysisResults(options: StoreAnalysisOptions): Promise<void> {
-  const { supabase, orgId, analysisId, parserResult, commitSha } = options;
+  const { supabase, orgId, analysisId, parserResult, commitSha, claimId } = options;
+
+  // Fence result writes: verify analysis claim has not been superseded
+  if (claimId) {
+    const { data: analysisData, error: claimErr } = await supabase
+      .from("analyses")
+      .select("summary")
+      .eq("id", analysisId)
+      .maybeSingle();
+
+    if (claimErr) {
+      throw new Error(`Failed to verify analysis claim fence: ${claimErr.message}`);
+    }
+    const currentClaim = (analysisData?.summary as Record<string, unknown>)?.claim_id;
+    if (currentClaim && currentClaim !== claimId) {
+      throw new Error(`Analysis claim superseded by another worker for analysis ${analysisId}`);
+    }
+  }
 
   // Clean up any stale records if re-running an analysis
-  await supabase.from("routes").delete().eq("analysis_id", analysisId);
-  await supabase.from("file_roles").delete().eq("analysis_id", analysisId);
-  await supabase.from("edges").delete().eq("analysis_id", analysisId);
-  await supabase.from("files").delete().eq("analysis_id", analysisId);
+  const { error: routesError } = await supabase.from("routes").delete().eq("analysis_id", analysisId);
+  if (routesError) {
+    throw new Error(`Failed to clean up stale routes: ${routesError.message}`);
+  }
+  const { error: rolesError } = await supabase.from("file_roles").delete().eq("analysis_id", analysisId);
+  if (rolesError) {
+    throw new Error(`Failed to clean up stale file_roles: ${rolesError.message}`);
+  }
+  const { error: edgesError } = await supabase.from("edges").delete().eq("analysis_id", analysisId);
+  if (edgesError) {
+    throw new Error(`Failed to clean up stale edges: ${edgesError.message}`);
+  }
+  const { error: filesError } = await supabase.from("files").delete().eq("analysis_id", analysisId);
+  if (filesError) {
+    throw new Error(`Failed to clean up stale files: ${filesError.message}`);
+  }
 
   // 1. Prepare files and assign UUIDs
   const fileIdMap = new Map<string, string>();
@@ -44,9 +74,9 @@ export async function storeAnalysisResults(options: StoreAnalysisOptions): Promi
   const FILE_BATCH_SIZE = 500;
   for (let i = 0; i < fileRows.length; i += FILE_BATCH_SIZE) {
     const batch = fileRows.slice(i, i + FILE_BATCH_SIZE);
-    const { error: filesError } = await supabase.from("files").insert(batch);
-    if (filesError) {
-      throw new Error(`Failed to store files: ${filesError.message}`);
+    const { error: batchFilesError } = await supabase.from("files").insert(batch);
+    if (batchFilesError) {
+      throw new Error(`Failed to store files: ${batchFilesError.message}`);
     }
   }
 
@@ -74,9 +104,9 @@ export async function storeAnalysisResults(options: StoreAnalysisOptions): Promi
   const EDGE_BATCH_SIZE = 500;
   for (let i = 0; i < edgeRows.length; i += EDGE_BATCH_SIZE) {
     const batch = edgeRows.slice(i, i + EDGE_BATCH_SIZE);
-    const { error: edgesError } = await supabase.from("edges").insert(batch);
-    if (edgesError) {
-      throw new Error(`Failed to store edges: ${edgesError.message}`);
+    const { error: batchEdgesError } = await supabase.from("edges").insert(batch);
+    if (batchEdgesError) {
+      throw new Error(`Failed to store edges: ${batchEdgesError.message}`);
     }
   }
 
@@ -97,9 +127,9 @@ export async function storeAnalysisResults(options: StoreAnalysisOptions): Promi
     const ROUTE_BATCH_SIZE = 500;
     for (let i = 0; i < routeRows.length; i += ROUTE_BATCH_SIZE) {
       const batch = routeRows.slice(i, i + ROUTE_BATCH_SIZE);
-      const { error: routesError } = await supabase.from("routes").insert(batch);
-      if (routesError) {
-        throw new Error(`Failed to store routes: ${routesError.message}`);
+      const { error: batchRoutesError } = await supabase.from("routes").insert(batch);
+      if (batchRoutesError) {
+        throw new Error(`Failed to store routes: ${batchRoutesError.message}`);
       }
     }
   }
@@ -124,9 +154,9 @@ export async function storeAnalysisResults(options: StoreAnalysisOptions): Promi
     const ROLE_BATCH_SIZE = 500;
     for (let i = 0; i < roleRows.length; i += ROLE_BATCH_SIZE) {
       const batch = roleRows.slice(i, i + ROLE_BATCH_SIZE);
-      const { error: rolesError } = await supabase.from("file_roles").insert(batch);
-      if (rolesError) {
-        throw new Error(`Failed to store file roles: ${rolesError.message}`);
+      const { error: batchRolesError } = await supabase.from("file_roles").insert(batch);
+      if (batchRolesError) {
+        throw new Error(`Failed to store file roles: ${batchRolesError.message}`);
       }
     }
   }
@@ -138,6 +168,8 @@ export async function storeAnalysisResults(options: StoreAnalysisOptions): Promi
     imports_count: parserResult.edges.length,
     routes_count: parserResult.routes.length,
     coverage: parserResult.coverage,
+    ...(claimId ? { claim_id: claimId } : {}),
+    heartbeat_at: new Date().toISOString(),
   };
 
   const { error: updateError } = await supabase

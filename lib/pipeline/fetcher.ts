@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { spawn, execSync } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
+import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { Readable } from "node:stream";
 
 export interface RepoSource {
@@ -63,13 +64,30 @@ export async function fetchRepoArchive(repoUrl: string): Promise<{
         stdio: ["pipe", "pipe", "pipe"],
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      Readable.fromWeb(response.body as any).pipe(tarProc.stdin);
+      // Prevent tar output pipes from blocking
+      tarProc.stdout?.resume();
+      tarProc.stderr?.resume();
 
-      tarProc.on("close", () => {
+      const sourceStream = Readable.fromWeb(response.body as WebReadableStream);
+
+      sourceStream.on("error", (err) => {
+        tarProc.stdin.destroy(err);
+        reject(err);
+      });
+
+      tarProc.stdin.on("error", (err) => {
+        reject(err);
+      });
+
+      sourceStream.pipe(tarProc.stdin);
+
+      tarProc.on("close", (code) => {
         // Windows bsdtar may exit with code 1 if repository contains Linux symlinks.
-        // We verify whether files were extracted below.
-        resolve();
+        if (code === 0 || (process.platform === "win32" && code === 1)) {
+          resolve();
+        } else {
+          reject(new Error(`tar extraction exited with code ${code}`));
+        }
       });
 
       tarProc.on("error", (err) => {
@@ -102,7 +120,7 @@ export async function fetchRepoArchive(repoUrl: string): Promise<{
       }
       const arrayBuffer = await fallbackRes.arrayBuffer();
       fs.writeFileSync(archivePath, Buffer.from(arrayBuffer));
-      execSync(`tar -xzf "${archivePath}" -C "${tempDir}"`, { stdio: "pipe" });
+      execFileSync("tar", ["-xzf", archivePath, "-C", tempDir], { stdio: "pipe" });
     } catch (fallbackErr: unknown) {
       const entries = fs.existsSync(tempDir) ? fs.readdirSync(tempDir) : [];
       const hasExtracted = entries.some((e) => {

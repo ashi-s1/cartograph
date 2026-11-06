@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { createClerkSupabaseServerClient } from "@/lib/supabase/server";
+import { createClerkSupabaseServerClient, createJobSupabaseServerClient } from "@/lib/supabase/server";
 import { parseGitHubUrl } from "@/lib/pipeline/fetcher";
 import { runAnalysisPipeline } from "@/lib/pipeline/runner";
 import crypto from "node:crypto";
 
 export async function POST(req: NextRequest) {
   try {
-    const { userId, orgId } = await auth();
+    const { userId, orgId, sessionId, getToken } = await auth();
     if (!userId || !orgId) {
       return NextResponse.json(
         { error: "Unauthorized: Active organization required" },
@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
       // Check for existing analysis (completed, active, or stalled)
       const { data: existingAnalysis } = await supabase
         .from("analyses")
-        .select("id, status, created_at")
+        .select("id, status, created_at, summary")
         .eq("org_id", orgId)
         .eq("project_id", existingProject.id)
         .order("created_at", { ascending: false })
@@ -60,6 +60,13 @@ export async function POST(req: NextRequest) {
 
       if (existingAnalysis) {
         existingAnalysisId = existingAnalysis.id;
+
+        const summary = (existingAnalysis.summary as Record<string, unknown>) || {};
+        const lastHeartbeat = summary.heartbeat_at
+          ? new Date(summary.heartbeat_at as string).getTime()
+          : new Date(existingAnalysis.created_at).getTime();
+        const isHeartbeatFresh = Date.now() - lastHeartbeat < 90_000;
+        const isActive = existingAnalysis.status === "running" && isHeartbeatFresh;
 
         if (!forceRerun) {
           // If completed, reuse existing analysis
@@ -72,9 +79,8 @@ export async function POST(req: NextRequest) {
             });
           }
 
-          // If recently started (< 90 seconds ago), let it continue
-          const ageMs = Date.now() - new Date(existingAnalysis.created_at).getTime();
-          if (existingAnalysis.status === "running" && ageMs < 90_000) {
+          // If active run with fresh heartbeat, let it continue
+          if (isActive) {
             return NextResponse.json({
               analysisId: existingAnalysis.id,
               projectId: existingProject.id,
@@ -84,13 +90,23 @@ export async function POST(req: NextRequest) {
           }
 
           // Otherwise (stalled > 90s or failed), fall through to restart pipeline
+        } else {
+          // Concurrent forceRerun requested while analysis is actively running
+          if (isActive) {
+            return NextResponse.json(
+              { error: "Analysis already actively running" },
+              { status: 409 }
+            );
+          }
         }
       }
     }
 
-    // 2. Prepare project & analysis IDs
+    // 2. Prepare project & analysis IDs and atomic claim
     const projectId = existingProject?.id || crypto.randomUUID();
     const analysisId = existingAnalysisId || crypto.randomUUID();
+    const claimId = crypto.randomUUID();
+    const nowIso = new Date().toISOString();
 
     if (!existingProject) {
       const { error: projectErr } = await supabase.from("projects").insert({
@@ -108,7 +124,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Insert or update analysis record to running state
+    // Insert or update analysis record to running state with atomic claim
     const { error: analysisErr } = await supabase.from("analyses").upsert({
       id: analysisId,
       org_id: orgId,
@@ -118,7 +134,11 @@ export async function POST(req: NextRequest) {
       stage_message: "Downloading repository archive from GitHub",
       error_message: null,
       completed_at: null,
-      created_at: new Date().toISOString(),
+      created_at: nowIso,
+      summary: {
+        claim_id: claimId,
+        heartbeat_at: nowIso,
+      },
     });
 
     if (analysisErr) {
@@ -128,16 +148,34 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. Kick off pipeline runner in background using Next.js after()
+    // 3. Create job-authenticated client with renewable credentials for background task
+    let initialToken: string | null = null;
+    try {
+      initialToken = await getToken({ template: "supabase" });
+    } catch {
+      initialToken = await getToken();
+    }
+    if (!initialToken) {
+      initialToken = await getToken();
+    }
+
+    const jobSupabase = createJobSupabaseServerClient({
+      sessionId,
+      orgId,
+      initialToken,
+    });
+
+    // Kick off pipeline runner in background using Next.js after()
     after(async () => {
       try {
         await runAnalysisPipeline({
-          supabase,
+          supabase: jobSupabase,
           orgId,
           repositoryUrl: parsed.url,
           projectId,
           analysisId,
           forceRerun: true,
+          claimId,
         });
       } catch (runErr) {
         console.error(`Pipeline execution failed for analysis ${analysisId}:`, runErr);

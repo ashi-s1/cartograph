@@ -14,6 +14,7 @@ export interface PipelineRunOptions {
   projectId?: string;
   analysisId?: string;
   forceRerun?: boolean;
+  claimId?: string;
 }
 
 export interface PipelineRunResult {
@@ -29,7 +30,7 @@ export interface PipelineRunResult {
  * Guarantees a top-level catch that marks failed state if anything breaks.
  */
 export async function runAnalysisPipeline(options: PipelineRunOptions): Promise<PipelineRunResult> {
-  const { supabase, orgId, repositoryUrl, forceRerun = false } = options;
+  const { supabase, orgId, repositoryUrl, forceRerun = false, claimId } = options;
   const { owner, repo, url: normalizedUrl } = parseGitHubUrl(repositoryUrl);
 
   // 1. Check for existing project and completed analysis
@@ -86,6 +87,9 @@ export async function runAnalysisPipeline(options: PipelineRunOptions): Promise<
   let currentStage: PipelineStage = "fetching";
 
   if (!options.analysisId) {
+    const initSummary = claimId
+      ? { claim_id: claimId, heartbeat_at: new Date().toISOString() }
+      : {};
     const { error: initAnalysisError } = await supabase.from("analyses").insert({
       id: analysisId,
       org_id: orgId,
@@ -93,6 +97,7 @@ export async function runAnalysisPipeline(options: PipelineRunOptions): Promise<
       status: "running",
       stage: "fetching",
       stage_message: "Fetching repository archive",
+      summary: initSummary,
     });
 
     if (initAnalysisError) {
@@ -100,7 +105,10 @@ export async function runAnalysisPipeline(options: PipelineRunOptions): Promise<
     }
   } else {
     // If reusing or re-running an existing analysis record, reset its status
-    await supabase
+    const resetSummary = claimId
+      ? { claim_id: claimId, heartbeat_at: new Date().toISOString() }
+      : undefined;
+    const { error: resetErr } = await supabase
       .from("analyses")
       .update({
         status: "running",
@@ -108,21 +116,86 @@ export async function runAnalysisPipeline(options: PipelineRunOptions): Promise<
         stage_message: "Fetching repository archive",
         error_message: null,
         completed_at: null,
+        ...(resetSummary ? { summary: resetSummary } : {}),
       })
       .eq("id", analysisId);
+
+    if (resetErr) {
+      throw new Error(`Failed to reset analysis record: ${resetErr.message}`);
+    }
   }
+
+  async function checkClaimFence(): Promise<boolean> {
+    if (!claimId) return true;
+    const { data, error } = await supabase
+      .from("analyses")
+      .select("summary")
+      .eq("id", analysisId)
+      .maybeSingle();
+
+    if (error || !data) {
+      return false;
+    }
+    const currentClaim = (data.summary as Record<string, unknown>)?.claim_id;
+    return !currentClaim || currentClaim === claimId;
+  }
+
+  // Renewable heartbeat interval
+  const heartbeatTimer = setInterval(async () => {
+    try {
+      if (claimId) {
+        const valid = await checkClaimFence();
+        if (!valid) {
+          clearInterval(heartbeatTimer);
+          return;
+        }
+        await supabase
+          .from("analyses")
+          .update({
+            summary: {
+              claim_id: claimId,
+              heartbeat_at: new Date().toISOString(),
+            },
+          })
+          .eq("id", analysisId);
+      }
+    } catch {
+      // Ignore background heartbeat update errors
+    }
+  }, 15_000);
 
   // Helper to update progress stage
   async function updateStage(stage: PipelineStage, stageMessage: string, extra?: Record<string, unknown>) {
+    if (claimId) {
+      const valid = await checkClaimFence();
+      if (!valid) {
+        throw new Error(`Analysis claim superseded by another worker for analysis ${analysisId}`);
+      }
+    }
+
     currentStage = stage;
-    await supabase
+    const nowIso = new Date().toISOString();
+    const { error: stageErr } = await supabase
       .from("analyses")
       .update({
         stage,
         stage_message: stageMessage,
+        ...(claimId
+          ? {
+              summary: {
+                claim_id: claimId,
+                heartbeat_at: nowIso,
+              },
+            }
+          : {}),
         ...extra,
       })
       .eq("id", analysisId);
+
+    if (stageErr) {
+      console.error(`Failed to update stage to ${stage} for analysis ${analysisId}:`, stageErr);
+      throw new Error(`Failed to update analysis stage: ${stageErr.message}`);
+    }
   }
 
   let tempDirToClean: string | null = null;
@@ -152,6 +225,7 @@ export async function runAnalysisPipeline(options: PipelineRunOptions): Promise<
       analysisId,
       parserResult,
       commitSha: fetched.commitSha,
+      claimId,
     });
 
     return {
@@ -163,24 +237,35 @@ export async function runAnalysisPipeline(options: PipelineRunOptions): Promise<
   } catch (err: unknown) {
     // Catch-all: Ensure failed state is recorded rather than stuck mid-parse
     const errorMessage = err instanceof Error ? err.message : String(err);
-    await supabase
-      .from("analyses")
-      .update({
-        status: "failed",
-        stage: "failed",
-        stage_message: `Failed during ${currentStage}`,
-        error_message: errorMessage,
-        completed_at: new Date().toISOString(),
-      })
-      .eq("id", analysisId);
+    const isSuperseded = errorMessage.includes("claim superseded");
+
+    if (!isSuperseded) {
+      const { error: failErr } = await supabase
+        .from("analyses")
+        .update({
+          status: "failed",
+          stage: "failed",
+          stage_message: `Failed during ${currentStage}`,
+          error_message: errorMessage,
+          completed_at: new Date().toISOString(),
+        })
+        .eq("id", analysisId);
+
+      if (failErr) {
+        console.error(`Failed to record failure state for analysis ${analysisId}:`, failErr);
+      }
+    }
 
     throw err;
   } finally {
+    clearInterval(heartbeatTimer);
     // Always clean up temp files from disk
     if (tempDirToClean && fs.existsSync(tempDirToClean)) {
       try {
         fs.rmSync(tempDirToClean, { recursive: true, force: true });
-      } catch {}
+      } catch {
+        // Cleanup failure is non-fatal
+      }
     }
   }
 }

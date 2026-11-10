@@ -133,7 +133,7 @@ async function judgeUsefulness(
   filePath: string,
   neighbours: string[],
   explanation: string
-): Promise<{ score: number; justification: string }> {
+): Promise<{ score: number | null; justification: string }> {
   const judgePrompt = `You are an expert software architect evaluating automated codebase explanations.
 Grade the following explanation on a scale of 1 to 5 for architectural usefulness and grounding.
 
@@ -161,15 +161,16 @@ REASON: <one sentence justification>`;
     });
 
     const reply = res.choices[0]?.message?.content || "";
-    const scoreMatch = reply.match(/SCORE:\s*([1-5](?:\.\d+)?)/i);
+    const scoreMatch = reply.match(/^SCORE:[ \t]*(\d+(?:\.\d+)?)[ \t]*$/im);
     const reasonMatch = reply.match(/REASON:\s*(.*)/i);
 
-    const score = scoreMatch ? parseFloat(scoreMatch[1]) : 3.0;
+    const parsedScore = scoreMatch ? Number(scoreMatch[1]) : NaN;
+    const score = Number.isFinite(parsedScore) && parsedScore >= 1 && parsedScore <= 5 ? parsedScore : null;
     const justification = reasonMatch ? reasonMatch[1].trim() : reply.trim();
 
     return { score, justification };
   } catch {
-    return { score: 3.0, justification: "Judge model call failed" };
+    return { score: null, justification: "Judge model call failed" };
   }
 }
 
@@ -192,19 +193,19 @@ async function main() {
     baseURL: googleApiKey ? "https://generativelanguage.googleapis.com/v1beta/openai/" : undefined,
   });
 
-  const modelName = "gemini-3.5-flash-lite";
+  const modelName = googleApiKey ? "gemini-3.5-flash-lite" : "gpt-4.1-mini-2025-04-14";
 
   // Experiments tracking
   const v1Stats = {
     inventedScores: [] as number[],
     formatCompliance: [] as boolean[],
-    judgeScores: [] as number[],
+    judgeScores: [] as (number | null)[],
   };
 
   const v2Stats = {
     inventedScores: [] as number[],
     formatCompliance: [] as boolean[],
-    judgeScores: [] as number[],
+    judgeScores: [] as (number | null)[],
   };
 
   // LangSmith experiments parent runs
@@ -314,10 +315,10 @@ async function main() {
     v2Stats.judgeScores.push(v2Judge.score);
 
     console.log(
-      `   V1 (Retired) -> Grounding: ${(v1Paths.score * 100).toFixed(0)}% | No Headings: ${v1Fmt.compliant ? "YES" : "NO"} | Usefulness: ${v1Judge.score}/5`
+      `   V1 (Retired) -> Grounding: ${(v1Paths.score * 100).toFixed(0)}% | No Headings: ${v1Fmt.compliant ? "YES" : "NO"} | Usefulness: ${v1Judge.score ?? "INVALID"}/5`
     );
     console.log(
-      `   V2 (Current) -> Grounding: ${(v2Paths.score * 100).toFixed(0)}% | No Headings: ${v2Fmt.compliant ? "YES" : "NO"} | Usefulness: ${v2Judge.score}/5\n`
+      `   V2 (Current) -> Grounding: ${(v2Paths.score * 100).toFixed(0)}% | No Headings: ${v2Fmt.compliant ? "YES" : "NO"} | Usefulness: ${v2Judge.score ?? "INVALID"}/5\n`
     );
   }
 
@@ -331,8 +332,15 @@ async function main() {
   const v1FormatPct = pct(v1Stats.formatCompliance);
   const v2FormatPct = pct(v2Stats.formatCompliance);
 
-  const v1AvgJudge = avg(v1Stats.judgeScores);
-  const v2AvgJudge = avg(v2Stats.judgeScores);
+  // Compare only paired valid grades so both versions use the same samples.
+  const validPairs = v1Stats.judgeScores.flatMap((v1, i) => {
+    const v2 = v2Stats.judgeScores[i];
+    return v1 !== null && v2 !== null ? [{ v1, v2 }] : [];
+  });
+  const excludedCount = COMPARISON_DATASET.length - validPairs.length;
+  console.log(`Excluded judge sample pairs: ${excludedCount} (missing or invalid SCORE)`);
+  const v1AvgJudge = validPairs.length ? avg(validPairs.map((p) => p.v1)) : NaN;
+  const v2AvgJudge = validPairs.length ? avg(validPairs.map((p) => p.v2)) : NaN;
 
   const deltaGrounding = v2Grounding - v1Grounding;
   const deltaFormat = v2FormatPct - v1FormatPct;
@@ -354,9 +362,12 @@ async function main() {
   );
   console.log("---------------------------+--------------+--------------+-------------\n");
 
-  console.log("VERDICT:");
+  // No regressions, at least one improvement, and valid judge evidence.
+  const v2Wins = validPairs.length > 0 && deltaGrounding >= 0 && deltaFormat >= 0 && deltaJudge >= 0
+    && (deltaGrounding > 0 || deltaFormat > 0 || deltaJudge > 0);
+  console.log(`VERDICT: ${v2Wins ? "V2 beats V1" : "V2 does not beat V1"}`);
   console.log(
-    `V2 (Current) is better by ${deltaGrounding >= 0 ? "+" : ""}${deltaGrounding.toFixed(1)}% on path grounding, ${deltaFormat >= 0 ? "+" : ""}${deltaFormat.toFixed(1)}% on format compliance, and ${deltaJudge >= 0 ? "+" : ""}${deltaJudge.toFixed(2)} pts on architectural usefulness.\n`
+    `V2 minus V1: ${deltaGrounding >= 0 ? "+" : ""}${deltaGrounding.toFixed(1)}% on path grounding, ${deltaFormat >= 0 ? "+" : ""}${deltaFormat.toFixed(1)}% on format compliance, and ${deltaJudge >= 0 ? "+" : ""}${deltaJudge.toFixed(2)} pts on architectural usefulness.\n`
   );
 
   // End LangSmith runs
@@ -386,7 +397,8 @@ async function main() {
     }
   }
 
-  console.log("\n[SUCCESS] Acceptance Check 4 PASSED.");
+  console.log(v2Wins ? "\n[SUCCESS] Acceptance Check 4 PASSED." : "\n[FAILURE] Acceptance Check 4 FAILED.");
+  if (!v2Wins) process.exitCode = 1;
 }
 
 main().catch((err) => {

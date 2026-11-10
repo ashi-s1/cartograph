@@ -23,65 +23,8 @@ import {
   type NonStructuralRole,
 } from "../../lib/ai/prompts.ts";
 
-export interface RoleDatasetItem {
-  filePath: string;
-  groundTruthRole: NonStructuralRole;
-  inbound?: string[];
-  outbound?: string[];
-}
-
-/**
- * Held-out dataset of 35 files with conventional ground truth roles.
- * Every role in this dataset is strictly one of the 7 permitted non-structural roles.
- */
-export const ROLE_BENCHMARK_DATASET: RoleDatasetItem[] = [
-  // Components (16)
-  { filePath: "components/canvas/detail-pane.tsx", groundTruthRole: "component" },
-  { filePath: "components/canvas/analysis-explorer.tsx", groundTruthRole: "component" },
-  { filePath: "components/canvas/canvas-graph.tsx", groundTruthRole: "component" },
-  { filePath: "components/canvas/canvas-shell.tsx", groundTruthRole: "component" },
-  { filePath: "components/canvas/coverage-banner.tsx", groundTruthRole: "component" },
-  { filePath: "components/canvas/folded-node.tsx", groundTruthRole: "component" },
-  { filePath: "components/canvas/panel-node.tsx", groundTruthRole: "component" },
-  { filePath: "components/canvas/formatted-prose.tsx", groundTruthRole: "component" },
-  { filePath: "components/app-shell.tsx", groundTruthRole: "component" },
-  { filePath: "components/theme-provider.tsx", groundTruthRole: "component" },
-  { filePath: "components/theme-toggle.tsx", groundTruthRole: "component" },
-  { filePath: "components/org-sync.tsx", groundTruthRole: "component" },
-  { filePath: "components/dashboard/dashboard-view.tsx", groundTruthRole: "component" },
-  { filePath: "components/dashboard/repo-submit-form.tsx", groundTruthRole: "component" },
-  { filePath: "components/dashboard/analyses-list.tsx", groundTruthRole: "component" },
-  { filePath: "components/pipeline/progress-view.tsx", groundTruthRole: "component" },
-
-  // Utilities (8)
-  { filePath: "lib/canvas/graph-maths.ts", groundTruthRole: "util" },
-  { filePath: "lib/canvas/folding.ts", groundTruthRole: "util" },
-  { filePath: "lib/canvas/layout.ts", groundTruthRole: "util" },
-  { filePath: "lib/canvas/analysis-helpers.ts", groundTruthRole: "util" },
-  { filePath: "lib/parser/resolver.ts", groundTruthRole: "util" },
-  { filePath: "lib/parser/exports.ts", groundTruthRole: "util" },
-  { filePath: "lib/parser/walker.ts", groundTruthRole: "util" },
-  { filePath: "lib/ai/eval-paths.ts", groundTruthRole: "util" },
-
-  // Config (3)
-  { filePath: "lib/ai/prompts.ts", groundTruthRole: "config" },
-  { filePath: "lib/taxonomy.ts", groundTruthRole: "config" },
-  { filePath: "lib/env.ts", groundTruthRole: "config" },
-
-  // Services (5)
-  { filePath: "lib/auth/org.ts", groundTruthRole: "service" },
-  { filePath: "lib/pipeline/fetcher.ts", groundTruthRole: "service" },
-  { filePath: "lib/pipeline/runner.ts", groundTruthRole: "service" },
-  { filePath: "lib/supabase/client.ts", groundTruthRole: "service" },
-  { filePath: "lib/supabase/server.ts", groundTruthRole: "service" },
-
-  // Repository (1)
-  { filePath: "lib/pipeline/store.ts", groundTruthRole: "repository" },
-
-  // Model / Schema types (2)
-  { filePath: "lib/parser/types.ts", groundTruthRole: "model" },
-  { filePath: "lib/parser/adapters/types.ts", groundTruthRole: "model" },
-];
+import { ROLE_BENCHMARK_DATASET } from "../../lib/ai/role-benchmark.ts";
+export { ROLE_BENCHMARK_DATASET } from "../../lib/ai/role-benchmark.ts";
 
 async function main() {
   console.log("=================================================");
@@ -102,7 +45,7 @@ async function main() {
     baseURL: googleApiKey ? "https://generativelanguage.googleapis.com/v1beta/openai/" : undefined,
   });
 
-  const modelName = "gemini-3.5-flash-lite";
+  const modelName = googleApiKey ? "gemini-3.5-flash-lite" : "gpt-4.1-mini-2025-04-14";
 
   let runTree: RunTree | null = null;
   if (process.env.LANGSMITH_API_KEY) {
@@ -123,6 +66,7 @@ async function main() {
   }
 
   let correctCount = 0;
+  let invalidCount = 0;
   const perRoleStats: Record<string, { total: number; correct: number }> = {};
   for (const r of PERMITTED_NON_STRUCTURAL_ROLES) {
     perRoleStats[r] = { total: 0, correct: 0 };
@@ -182,11 +126,12 @@ async function main() {
       .trim()
       .replace(/[^a-z]/g, "");
 
-    const predictedRole: NonStructuralRole = PERMITTED_NON_STRUCTURAL_ROLES.includes(
+    const predictedRole: NonStructuralRole | "invalid" = PERMITTED_NON_STRUCTURAL_ROLES.includes(
       predictedRaw as NonStructuralRole
     )
       ? (predictedRaw as NonStructuralRole)
-      : "util";
+      : "invalid";
+    if (predictedRole === "invalid") invalidCount++;
 
     const isMatch = predictedRole === item.groundTruthRole;
     if (isMatch) correctCount++;
@@ -206,6 +151,7 @@ async function main() {
   console.log(" Role Classification Results Summary");
   console.log("=================================================");
   console.log(`Total Dataset Files Evaluated : ${ROLE_BENCHMARK_DATASET.length}`);
+  console.log(`Invalid Predictions           : ${invalidCount}`);
   console.log(`Correct Classifications       : ${correctCount}`);
   console.log(`Overall Accuracy Percentage   : ${accuracy.toFixed(1)}%\n`);
 
@@ -225,6 +171,7 @@ async function main() {
         outputs: {
           dataset_size: ROLE_BENCHMARK_DATASET.length,
           correct_count: correctCount,
+          invalid_count: invalidCount,
           accuracy_percentage: accuracy,
           per_role: perRoleStats,
         },

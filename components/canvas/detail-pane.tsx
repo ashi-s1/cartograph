@@ -123,27 +123,27 @@ export function DetailPane({
     tracingActive: boolean;
   }
   const [explanationsCache, setExplanationsCache] = useState<Record<string, CachedExplanationUI>>({});
-  const [isExplaining, setIsExplaining] = useState(false);
-  const [explainError, setExplainError] = useState<string | null>(null);
+  const [explainingTargets, setExplainingTargets] = useState<Record<string, boolean>>({});
+  const [explainErrors, setExplainErrors] = useState<Record<string, string | null>>({});
+  const selectedCacheKey = selectedFile?.path ?? (selectedNode ? `folder:${selectedNode.folder}` : "");
+  const isExplaining = explainingTargets[selectedCacheKey] ?? false;
+  const explainError = explainErrors[selectedCacheKey] ?? null;
 
-  // Set of all repository paths and folders for linkifying prose
+  // Set of all repository file paths for linkifying prose
   const allRepoPaths = useMemo(() => {
     const paths = new Set<string>();
     for (const f of data.files) {
       paths.add(f.path);
     }
-    for (const folder of data.folders || []) {
-      paths.add(folder);
-    }
     return paths;
-  }, [data.files, data.folders]);
+  }, [data.files]);
 
   // Handle Explain request
   const handleExplain = async (targetType: "file" | "folder", targetPath: string) => {
     if (!analysisId) return;
     const cacheKey = targetType === "file" ? targetPath : `folder:${targetPath}`;
-    setIsExplaining(true);
-    setExplainError(null);
+    setExplainingTargets((prev) => ({ ...prev, [cacheKey]: true }));
+    setExplainErrors((prev) => ({ ...prev, [cacheKey]: null }));
 
     try {
       const res = await fetch("/api/ai/explain", {
@@ -174,9 +174,9 @@ export function DetailPane({
         },
       }));
     } catch (err) {
-      setExplainError(err instanceof Error ? err.message : "Failed to generate explanation");
+      setExplainErrors((prev) => ({ ...prev, [cacheKey]: err instanceof Error ? err.message : "Failed to generate explanation" }));
     } finally {
-      setIsExplaining(false);
+      setExplainingTargets((prev) => ({ ...prev, [cacheKey]: false }));
     }
   };
 
@@ -403,7 +403,7 @@ export function DetailPane({
                       {selectedFileRole}
                     </span>
                   </div>
-                  {(!selectedFileRole || selectedFileRole.toLowerCase() === "generic") && (
+                  {(!selectedFileRole || ["generic", "unclassified module"].includes(selectedFileRole.toLowerCase())) && (
                     <button
                       type="button"
                       onClick={() => handleClassifyRole(selectedFile.path)}
@@ -718,7 +718,7 @@ export function DetailPane({
                     {selectedFileRole}
                   </span>
                 </div>
-                {(!selectedFileRole || selectedFileRole.toLowerCase() === "generic") && (
+                {(!selectedFileRole || ["generic", "unclassified module"].includes(selectedFileRole.toLowerCase())) && (
                   <button
                     type="button"
                     onClick={() => handleClassifyRole(selectedFile.path)}

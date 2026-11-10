@@ -1,5 +1,7 @@
 "use client";
 
+import { ROLE_BENCHMARK_DATASET } from "@/lib/ai/role-benchmark";
+
 import React, { useState } from "react";
 import {
   CheckCircle2,
@@ -129,50 +131,58 @@ const BENCHMARK_SAMPLES: BenchmarkSample[] = [
   },
 ];
 
-interface RoleAccuracyItem {
-  filePath: string;
-  expected: string;
-  predicted: string;
-  match: boolean;
-}
-
-const ROLE_ACCURACY_DATASET: RoleAccuracyItem[] = [
-  { filePath: "components/canvas/detail-pane.tsx", expected: "component", predicted: "component", match: true },
-  { filePath: "components/canvas/analysis-explorer.tsx", expected: "component", predicted: "component", match: true },
-  { filePath: "components/canvas/canvas-graph.tsx", expected: "component", predicted: "component", match: true },
-  { filePath: "components/canvas/canvas-shell.tsx", expected: "component", predicted: "component", match: true },
-  { filePath: "components/canvas/coverage-banner.tsx", expected: "component", predicted: "component", match: true },
-  { filePath: "components/canvas/folded-node.tsx", expected: "component", predicted: "component", match: true },
-  { filePath: "components/canvas/panel-node.tsx", expected: "component", predicted: "component", match: true },
-  { filePath: "components/canvas/formatted-prose.tsx", expected: "component", predicted: "component", match: true },
-  { filePath: "components/app-shell.tsx", expected: "component", predicted: "component", match: true },
-  { filePath: "components/theme-provider.tsx", expected: "component", predicted: "component", match: true },
-  { filePath: "components/theme-toggle.tsx", expected: "component", predicted: "component", match: true },
-  { filePath: "components/org-sync.tsx", expected: "component", predicted: "component", match: true },
-  { filePath: "components/dashboard/dashboard-view.tsx", expected: "component", predicted: "component", match: true },
-  { filePath: "components/dashboard/repo-submit-form.tsx", expected: "component", predicted: "component", match: true },
-  { filePath: "components/dashboard/analyses-list.tsx", expected: "component", predicted: "component", match: true },
-  { filePath: "components/pipeline/progress-view.tsx", expected: "component", predicted: "component", match: true },
-  { filePath: "lib/canvas/graph-maths.ts", expected: "util", predicted: "util", match: true },
-  { filePath: "lib/canvas/folding.ts", expected: "util", predicted: "util", match: true },
-  { filePath: "lib/canvas/layout.ts", expected: "util", predicted: "util", match: true },
-  { filePath: "lib/canvas/analysis-helpers.ts", expected: "util", predicted: "util", match: true },
-  { filePath: "lib/parser/resolver.ts", expected: "util", predicted: "util", match: true },
-  { filePath: "lib/parser/exports.ts", expected: "util", predicted: "util", match: true },
-  { filePath: "lib/parser/walker.ts", expected: "util", predicted: "util", match: true },
-  { filePath: "lib/ai/eval-paths.ts", expected: "util", predicted: "util", match: true },
-  { filePath: "lib/ai/prompts.ts", expected: "config", predicted: "util", match: false },
-  { filePath: "lib/taxonomy.ts", expected: "config", predicted: "config", match: true },
-  { filePath: "lib/env.ts", expected: "config", predicted: "config", match: true },
-  { filePath: "lib/auth/org.ts", expected: "service", predicted: "service", match: true },
-  { filePath: "lib/pipeline/fetcher.ts", expected: "service", predicted: "service", match: true },
-  { filePath: "lib/pipeline/runner.ts", expected: "service", predicted: "service", match: true },
-  { filePath: "lib/supabase/client.ts", expected: "service", predicted: "hook", match: false },
-  { filePath: "lib/supabase/server.ts", expected: "service", predicted: "config", match: false },
-  { filePath: "lib/pipeline/store.ts", expected: "repository", predicted: "repository", match: true },
-  { filePath: "lib/parser/types.ts", expected: "model", predicted: "model", match: true },
-  { filePath: "lib/parser/adapters/types.ts", expected: "model", predicted: "model", match: true },
-];
+// Saved sample predictions; expected roles come from the shared held-out dataset.
+const ROLE_SAMPLE_PREDICTIONS: Record<string, string> = {
+  "components/canvas/detail-pane.tsx": "component",
+  "components/canvas/analysis-explorer.tsx": "component",
+  "components/canvas/canvas-graph.tsx": "component",
+  "components/canvas/canvas-shell.tsx": "component",
+  "components/canvas/coverage-banner.tsx": "component",
+  "components/canvas/folded-node.tsx": "component",
+  "components/canvas/panel-node.tsx": "component",
+  "components/canvas/formatted-prose.tsx": "component",
+  "components/app-shell.tsx": "component",
+  "components/theme-provider.tsx": "component",
+  "components/theme-toggle.tsx": "component",
+  "components/org-sync.tsx": "component",
+  "components/dashboard/dashboard-view.tsx": "component",
+  "components/dashboard/repo-submit-form.tsx": "component",
+  "components/dashboard/analyses-list.tsx": "component",
+  "components/pipeline/progress-view.tsx": "component",
+  "lib/canvas/graph-maths.ts": "util",
+  "lib/canvas/folding.ts": "util",
+  "lib/canvas/layout.ts": "util",
+  "lib/canvas/analysis-helpers.ts": "util",
+  "lib/parser/resolver.ts": "util",
+  "lib/parser/exports.ts": "util",
+  "lib/parser/walker.ts": "util",
+  "lib/ai/eval-paths.ts": "util",
+  "lib/ai/prompts.ts": "util",
+  "lib/taxonomy.ts": "config",
+  "lib/env.ts": "config",
+  "lib/auth/org.ts": "service",
+  "lib/pipeline/fetcher.ts": "service",
+  "lib/pipeline/runner.ts": "service",
+  "lib/supabase/client.ts": "hook",
+  "lib/supabase/server.ts": "config",
+  "lib/pipeline/store.ts": "repository",
+  "lib/parser/types.ts": "model",
+  "lib/parser/adapters/types.ts": "model",
+};
+const ROLE_ACCURACY_DATASET = ROLE_BENCHMARK_DATASET.map((item) => {
+  const predicted = ROLE_SAMPLE_PREDICTIONS[item.filePath] ?? "invalid";
+  return { filePath: item.filePath, expected: item.groundTruthRole, predicted, match: predicted === item.groundTruthRole };
+});
+const roleCorrect = ROLE_ACCURACY_DATASET.filter((item) => item.match).length;
+const roleAccuracy = 100 * roleCorrect / ROLE_ACCURACY_DATASET.length;
+const average = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / values.length;
+const v1Grounding = average(BENCHMARK_SAMPLES.map((s) => s.v1Grounding)) * 100;
+const v2Grounding = average(BENCHMARK_SAMPLES.map((s) => s.v2Grounding)) * 100;
+const v1Format = average(BENCHMARK_SAMPLES.map((s) => Number(s.v1Formatted))) * 100;
+const v2Format = average(BENCHMARK_SAMPLES.map((s) => Number(s.v2Formatted))) * 100;
+const v1Judge = average(BENCHMARK_SAMPLES.map((s) => s.v1JudgeScore));
+const v2Judge = average(BENCHMARK_SAMPLES.map((s) => s.v2JudgeScore));
+const comparison = (delta: number, unit: string) => `${Math.abs(delta).toFixed(2)} ${unit} ${delta > 0 ? "better" : delta < 0 ? "worse" : "change"}`;
 
 export function EvalsDashboard() {
   const [activeTab, setActiveTab] = useState<"prompts" | "paths" | "roles">("prompts");
@@ -222,7 +232,7 @@ export function EvalsDashboard() {
       if (res.ok) {
         const data = await res.json();
         setPathCheckResult({
-          score: data.groundingScore,
+          score: data.score,
           passed: data.passed,
           invented: data.inventedPaths,
           valid: data.validPaths,
@@ -295,7 +305,7 @@ export function EvalsDashboard() {
               : "border-transparent text-muted-foreground hover:text-foreground"
           }`}
         >
-          Role Classification Accuracy (91.4%)
+          Role Classification Accuracy ({roleAccuracy.toFixed(1)}%)
         </button>
       </div>
 
@@ -309,22 +319,22 @@ export function EvalsDashboard() {
               <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold text-muted-foreground">Path Grounding</span>
                 <span className="text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                  +5.4% better
+                  {comparison(v2Grounding - v1Grounding, "pp")}
                 </span>
               </div>
               <div className="flex items-baseline justify-between pt-1">
                 <div>
                   <div className="text-[11px] text-zinc-500">V1 Retired</div>
-                  <div className="text-xl font-bold text-zinc-400 font-mono">87.5%</div>
+                  <div className="text-xl font-bold text-zinc-400 font-mono">{v1Grounding.toFixed(1)}%</div>
                 </div>
                 <ArrowRight className="h-4 w-4 text-zinc-600" />
                 <div className="text-right">
                   <div className="text-[11px] text-emerald-400 font-medium">V2 Production</div>
-                  <div className="text-xl font-bold text-emerald-400 font-mono">92.9%</div>
+                  <div className="text-xl font-bold text-emerald-400 font-mono">{v2Grounding.toFixed(1)}%</div>
                 </div>
               </div>
               <div className="text-[11px] text-muted-foreground leading-snug">
-                Tests every path-shaped token against verified AST inputs. V2 reduces phantom references.
+                Tests every path-shaped token against verified AST inputs. V2 grounding changes by {(v2Grounding - v1Grounding).toFixed(1)} percentage points.
               </div>
             </div>
 
@@ -333,22 +343,22 @@ export function EvalsDashboard() {
               <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold text-muted-foreground">Format Compliance (No Headings)</span>
                 <span className="text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                  +100.0% better
+                  {comparison(v2Format - v1Format, "pp")}
                 </span>
               </div>
               <div className="flex items-baseline justify-between pt-1">
                 <div>
                   <div className="text-[11px] text-zinc-500">V1 Retired</div>
-                  <div className="text-xl font-bold text-rose-400 font-mono">0.0%</div>
+                  <div className="text-xl font-bold text-rose-400 font-mono">{v1Format.toFixed(1)}%</div>
                 </div>
                 <ArrowRight className="h-4 w-4 text-zinc-600" />
                 <div className="text-right">
                   <div className="text-[11px] text-emerald-400 font-medium">V2 Production</div>
-                  <div className="text-xl font-bold text-emerald-400 font-mono">100.0%</div>
+                  <div className="text-xl font-bold text-emerald-400 font-mono">{v2Format.toFixed(1)}%</div>
                 </div>
               </div>
               <div className="text-[11px] text-muted-foreground leading-snug">
-                V1 regularly emitted markdown `#` headers that fragment the narrow inspector. V2 achieved 100% compliance.
+                V1 regularly emitted markdown `#` headers that fragment the narrow inspector. V2 achieved {v2Format.toFixed(1)}% compliance.
               </div>
             </div>
 
@@ -357,18 +367,18 @@ export function EvalsDashboard() {
               <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold text-muted-foreground">Architectural Usefulness</span>
                 <span className="text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                  +1.17 pts better
+                  {comparison(v2Judge - v1Judge, "pts")}
                 </span>
               </div>
               <div className="flex items-baseline justify-between pt-1">
                 <div>
                   <div className="text-[11px] text-zinc-500">V1 Retired</div>
-                  <div className="text-xl font-bold text-amber-400 font-mono">3.83 / 5</div>
+                  <div className="text-xl font-bold text-amber-400 font-mono">{v1Judge.toFixed(2)} / 5</div>
                 </div>
                 <ArrowRight className="h-4 w-4 text-zinc-600" />
                 <div className="text-right">
                   <div className="text-[11px] text-emerald-400 font-medium">V2 Production</div>
-                  <div className="text-xl font-bold text-emerald-400 font-mono">5.00 / 5</div>
+                  <div className="text-xl font-bold text-emerald-400 font-mono">{v2Judge.toFixed(2)} / 5</div>
                 </div>
               </div>
               <div className="text-[11px] text-muted-foreground leading-snug">
@@ -568,51 +578,32 @@ export function EvalsDashboard() {
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
             <div className="rounded-lg border border-border/70 bg-card p-3 space-y-1 text-center">
               <div className="text-[10px] text-muted-foreground uppercase font-semibold">Overall</div>
-              <div className="text-lg font-bold text-emerald-400 font-mono">91.4%</div>
-              <div className="text-[10px] text-zinc-400">32 / 35 files</div>
+              <div className="text-lg font-bold text-emerald-400 font-mono">{roleAccuracy.toFixed(1)}%</div>
+              <div className="text-[10px] text-zinc-400">{roleCorrect} / {ROLE_ACCURACY_DATASET.length} files</div>
             </div>
-            <div className="rounded-lg border border-border/70 bg-card p-3 space-y-1 text-center">
-              <div className="text-[10px] text-muted-foreground uppercase font-semibold">Component</div>
-              <div className="text-lg font-bold text-emerald-400 font-mono">100.0%</div>
-              <div className="text-[10px] text-zinc-400">16 / 16 files</div>
-            </div>
-            <div className="rounded-lg border border-border/70 bg-card p-3 space-y-1 text-center">
-              <div className="text-[10px] text-muted-foreground uppercase font-semibold">Util</div>
-              <div className="text-lg font-bold text-emerald-400 font-mono">100.0%</div>
-              <div className="text-[10px] text-zinc-400">8 / 8 files</div>
-            </div>
-            <div className="rounded-lg border border-border/70 bg-card p-3 space-y-1 text-center">
-              <div className="text-[10px] text-muted-foreground uppercase font-semibold">Service</div>
-              <div className="text-lg font-bold text-amber-400 font-mono">60.0%</div>
-              <div className="text-[10px] text-zinc-400">3 / 5 files</div>
-            </div>
-            <div className="rounded-lg border border-border/70 bg-card p-3 space-y-1 text-center">
-              <div className="text-[10px] text-muted-foreground uppercase font-semibold">Config</div>
-              <div className="text-lg font-bold text-amber-400 font-mono">66.7%</div>
-              <div className="text-[10px] text-zinc-400">2 / 3 files</div>
-            </div>
-            <div className="rounded-lg border border-border/70 bg-card p-3 space-y-1 text-center">
-              <div className="text-[10px] text-muted-foreground uppercase font-semibold">Model</div>
-              <div className="text-lg font-bold text-emerald-400 font-mono">100.0%</div>
-              <div className="text-[10px] text-zinc-400">2 / 2 files</div>
-            </div>
-            <div className="rounded-lg border border-border/70 bg-card p-3 space-y-1 text-center">
-              <div className="text-[10px] text-muted-foreground uppercase font-semibold">Repository</div>
-              <div className="text-lg font-bold text-emerald-400 font-mono">100.0%</div>
-              <div className="text-[10px] text-zinc-400">1 / 1 files</div>
-            </div>
+            {["component", "util", "service", "config", "model", "repository"].map((role) => {
+              const items = ROLE_ACCURACY_DATASET.filter((item) => item.expected === role);
+              const correct = items.filter((item) => item.match).length;
+              return (
+                <div key={role} className="rounded-lg border border-border/70 bg-card p-3 space-y-1 text-center">
+                  <div className="text-[10px] text-muted-foreground uppercase font-semibold">{role}</div>
+                  <div className="text-lg font-bold text-emerald-400 font-mono">{(100 * correct / items.length).toFixed(1)}%</div>
+                  <div className="text-[10px] text-zinc-400">{correct} / {items.length} files</div>
+                </div>
+              );
+            })}
           </div>
 
           <div className="rounded-lg border border-border/70 bg-card overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-border/70 bg-muted/30">
               <div className="text-xs font-semibold text-foreground">
-                Held-Out Benchmark Dataset (35 Files, Strictly Permitted Roles Only)
+                Held-Out Benchmark Dataset ({ROLE_ACCURACY_DATASET.length} Files, Strictly Permitted Roles Only)
               </div>
               <button
                 onClick={() => setShowAllRoles(!showAllRoles)}
                 className="text-xs text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1"
               >
-                {showAllRoles ? "Collapse View" : "Show All 35 Files"}
+                {showAllRoles ? "Collapse View" : `Show All ${ROLE_ACCURACY_DATASET.length} Files`}
                 {showAllRoles ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
               </button>
             </div>

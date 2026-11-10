@@ -170,7 +170,7 @@ export function checkInventedPaths(
 
     // Basename match (e.g. model mentioned "page.tsx" or "detail-pane.tsx" matching shown path)
     const base = normalized.split("/").pop()?.toLowerCase();
-    if (base && baseNameMap.has(base)) {
+    if (!normalized.includes("/") && base && baseNameMap.has(base)) {
       validPaths.push(normalized);
       details.push({
         token,
@@ -184,7 +184,7 @@ export function checkInventedPaths(
     // Subpath match (e.g. "canvas/detail-pane.tsx" matching "components/canvas/detail-pane.tsx")
     let matchedSubpath = false;
     for (const allowed of exactSet) {
-      if (allowed.endsWith(`/${normalized}`) || allowed.endsWith(normalized)) {
+      if (allowed.endsWith(`/${normalized}`)) {
         matchedSubpath = true;
         validPaths.push(normalized);
         details.push({

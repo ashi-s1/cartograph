@@ -27,13 +27,22 @@ export function FormattedProse({
   // Normalize paths set for fast case-insensitive & exact lookup
   const normalizedPathsMap = useMemo(() => {
     const map = new Map<string, string>();
+    const basenameCounts = new Map<string, number>();
+    for (const p of knownPaths) {
+      const base = p.split("/").pop()?.toLowerCase();
+      if (base) basenameCounts.set(base, (basenameCounts.get(base) ?? 0) + 1);
+    }
+    for (const p of knownPaths) {
+      const base = p.split("/").pop();
+      if (base && basenameCounts.get(base.toLowerCase()) === 1) {
+        map.set(base, p);
+        map.set(base.toLowerCase(), p);
+      }
+    }
+    // Full paths take precedence over shorthand basenames.
     for (const p of knownPaths) {
       map.set(p, p);
       map.set(p.toLowerCase(), p);
-      const base = p.split("/").pop();
-      if (base && !map.has(base)) {
-        map.set(base, p);
-      }
     }
     return map;
   }, [knownPaths]);

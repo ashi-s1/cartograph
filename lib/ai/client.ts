@@ -28,7 +28,9 @@ import {
 import { checkInventedPaths, type PathCheckResult } from "./eval-paths";
 
 // Exact pinned model version — never floating alias
-export const PINNED_MODEL = "gemini-3.5-flash-lite";
+export const PINNED_MODEL = process.env.GOOGLE_API_KEY
+  ? "gemini-3.5-flash-lite"
+  : "gpt-4.1-mini-2025-04-14";
 
 /**
  * Returns true if LangSmith tracing is fully configured in the environment.

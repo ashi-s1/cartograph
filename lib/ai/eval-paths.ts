@@ -28,8 +28,16 @@ export interface PathCheckResult {
 // Known external packages / libraries that are not repository file paths
 const EXTERNAL_PACKAGE_EXCLUSIONS = new Set([
   "react",
+  "react.js",
   "react-dom",
   "next",
+  "next.js",
+  "node",
+  "node.js",
+  "express",
+  "express.js",
+  "nest",
+  "nestjs",
   "next/link",
   "next/server",
   "next/navigation",
@@ -47,6 +55,12 @@ const EXTERNAL_PACKAGE_EXCLUSIONS = new Set([
   "tailwind",
   "tailwindcss",
   "zod",
+  "package.json",
+  "tsconfig.json",
+  "jsconfig.json",
+  "next.config.js",
+  "next.config.ts",
+  "next.config.mjs",
 ]);
 
 const FILE_EXTENSIONS_REGEX = /\.(?:tsx?|jsx?|json|mjs|cjs|sql|css|md|ya?ml|svg|ico)$/i;

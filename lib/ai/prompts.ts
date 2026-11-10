@@ -129,7 +129,16 @@ Strict Constraints:
    - component
    - hook
 2. You must NEVER assign 'page', 'route', or 'controller' — convention owns those and structural adapters handle them.
-3. Reply ONLY with the chosen role name in lowercase, nothing else. No punctuation, no markdown, no explanation.`;
+3. Reply ONLY with the chosen role name in lowercase, nothing else. No punctuation, no markdown, no explanation.
+
+Role Definition Guidelines:
+- service: Backend services, pipeline workers, external API clients, authentication helpers, and database client providers (e.g. Supabase client/server connectors in lib/supabase/*, auth services, pipeline runners).
+- repository: Direct database storage, table persistence, and data access layers (e.g. store.ts).
+- model: Types, interfaces, AST schemas, and data structures.
+- util: Pure computation helpers, math functions, AST walkers, and path resolvers.
+- config: System configuration, environment variables, taxonomies, and AI prompt templates/builders (e.g. prompts.ts, env.ts, taxonomy.ts).
+- component: React UI elements, visual components, modals, and canvas nodes.
+- hook: Standalone reusable React state hooks (e.g. useTheme, useWindowSize).`;
 
   const user = `File Path: \`${filePath}\`
 

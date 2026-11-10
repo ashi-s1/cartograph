@@ -51,7 +51,7 @@ export function FormattedProse({
    */
   const renderInline = (text: string): React.ReactNode[] => {
     // 1. Convert any accidental headings (#...) at start of text into bold
-    let cleaned = text.replace(/^#+\s*(.*)$/, "**$1**");
+    const cleaned = text.replace(/^#+\s*(.*)$/, "**$1**");
 
     // 2. Tokenize by bold **...** and inline code `...`
     const tokens: React.ReactNode[] = [];

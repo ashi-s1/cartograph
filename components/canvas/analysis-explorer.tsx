@@ -24,6 +24,7 @@ export function AnalysisExplorer({
   repoName = initialData.repositoryRoot,
   commitSha = null,
   repositoryUrl = null,
+  analysisId,
 }: AnalysisExplorerProps) {
   const router = useRouter();
   const [isRerunning, startRerunTransition] = useTransition();

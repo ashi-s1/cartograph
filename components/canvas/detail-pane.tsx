@@ -20,7 +20,6 @@ import {
   AlertTriangle,
   RotateCw,
   CheckCircle2,
-  AlertCircle,
   Tag,
 } from "lucide-react";
 import type { ParserResult, ParsedFile } from "@/lib/parser/types";
@@ -95,7 +94,6 @@ export function DetailPane({
   onHoverTarget,
   analysisId,
   commitSha,
-  repositoryUrl,
   onRerun,
 }: DetailPaneProps) {
   const selectedFile = selection?.file;

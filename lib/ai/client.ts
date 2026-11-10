@@ -10,7 +10,7 @@
 
 import OpenAI from "openai";
 import { wrapOpenAI } from "langsmith/wrappers";
-import { RunTree } from "langsmith";
+import { RunTree, Client as LangSmithClient } from "langsmith";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   buildFileExplanationPrompt,
@@ -24,8 +24,8 @@ import {
   computeContentHash,
   getCachedExplanation,
   setCachedExplanation,
-  type CacheEntry,
 } from "./cache";
+import { checkInventedPaths, type PathCheckResult } from "./eval-paths";
 
 // Exact pinned model version — never floating alias
 export const PINNED_MODEL = "gemini-3.5-flash-lite";
@@ -92,6 +92,7 @@ export interface ExplainResult {
   contentHash: string;
   model: string;
   tracingActive: boolean;
+  evalResult?: PathCheckResult;
 }
 
 /**
@@ -155,10 +156,20 @@ export async function explainFile(params: ExplainFileParams): Promise<ExplainRes
   });
 
   if (cached) {
+    // Live evaluation of cached explanation
+    const allowedPaths = [filePath, ...inbound, ...outbound];
+    const evalResult = checkInventedPaths(cached.content, allowedPaths);
+
     if (run) {
       try {
         await run.end({
-          outputs: { explanation: cached.content, cached: true },
+          outputs: {
+            explanation: cached.content,
+            cached: true,
+            invented_paths_score: evalResult.score,
+            invented_paths_count: evalResult.inventedPaths.length,
+            invented_paths: evalResult.inventedPaths,
+          },
         });
         await run.patchRun();
       } catch (e) {
@@ -172,6 +183,7 @@ export async function explainFile(params: ExplainFileParams): Promise<ExplainRes
       contentHash,
       model: PINNED_MODEL,
       tracingActive,
+      evalResult,
     };
   }
 
@@ -199,6 +211,10 @@ export async function explainFile(params: ExplainFileParams): Promise<ExplainRes
 
   const text = completion.choices[0]?.message?.content?.trim() || "No explanation returned.";
 
+  // Live evaluation of newly generated explanation
+  const allowedPaths = [filePath, ...inbound, ...outbound];
+  const evalResult = checkInventedPaths(text, allowedPaths);
+
   // 3. Write newly generated explanation to cache
   await setCachedExplanation({
     supabase,
@@ -215,11 +231,27 @@ export async function explainFile(params: ExplainFileParams): Promise<ExplainRes
   if (run) {
     try {
       await run.end({
-        outputs: { explanation: text, cached: false },
+        outputs: {
+          explanation: text,
+          cached: false,
+          invented_paths_score: evalResult.score,
+          invented_paths_count: evalResult.inventedPaths.length,
+          invented_paths: evalResult.inventedPaths,
+        },
       });
       await run.patchRun();
+
+      if (process.env.LANGSMITH_API_KEY) {
+        const lsClient = new LangSmithClient();
+        await lsClient.createFeedback(run.id, "invented_paths_score", {
+          score: evalResult.score,
+          comment: evalResult.passed
+            ? "No invented paths"
+            : `Invented: ${evalResult.inventedPaths.join(", ")}`,
+        });
+      }
     } catch (e) {
-      console.warn("[AI] LangSmith patchRun failed:", e);
+      console.warn("[AI] LangSmith evaluation feedback failed:", e);
     }
   }
 
@@ -229,6 +261,7 @@ export async function explainFile(params: ExplainFileParams): Promise<ExplainRes
     contentHash,
     model: PINNED_MODEL,
     tracingActive,
+    evalResult,
   };
 }
 
@@ -290,10 +323,24 @@ export async function explainFolder(params: ExplainFolderParams): Promise<Explai
   });
 
   if (cached) {
+    const allowedFolderPaths = [
+      folderPath,
+      ...containedFiles.map((f) => f.path),
+      ...inbound,
+      ...outbound,
+    ];
+    const evalResult = checkInventedPaths(cached.content, allowedFolderPaths);
+
     if (run) {
       try {
         await run.end({
-          outputs: { explanation: cached.content, cached: true },
+          outputs: {
+            explanation: cached.content,
+            cached: true,
+            invented_paths_score: evalResult.score,
+            invented_paths_count: evalResult.inventedPaths.length,
+            invented_paths: evalResult.inventedPaths,
+          },
         });
         await run.patchRun();
       } catch (e) {
@@ -307,6 +354,7 @@ export async function explainFolder(params: ExplainFolderParams): Promise<Explai
       contentHash,
       model: PINNED_MODEL,
       tracingActive,
+      evalResult,
     };
   }
 
@@ -332,6 +380,15 @@ export async function explainFolder(params: ExplainFolderParams): Promise<Explai
 
   const text = completion.choices[0]?.message?.content?.trim() || "No explanation returned.";
 
+  // Live evaluation of folder explanation
+  const allowedFolderPaths = [
+    folderPath,
+    ...containedFiles.map((f) => f.path),
+    ...inbound,
+    ...outbound,
+  ];
+  const evalResult = checkInventedPaths(text, allowedFolderPaths);
+
   // 3. Write to cache
   await setCachedExplanation({
     supabase,
@@ -348,9 +405,25 @@ export async function explainFolder(params: ExplainFolderParams): Promise<Explai
   if (run) {
     try {
       await run.end({
-        outputs: { explanation: text, cached: false },
+        outputs: {
+          explanation: text,
+          cached: false,
+          invented_paths_score: evalResult.score,
+          invented_paths_count: evalResult.inventedPaths.length,
+          invented_paths: evalResult.inventedPaths,
+        },
       });
       await run.patchRun();
+
+      if (process.env.LANGSMITH_API_KEY) {
+        const lsClient = new LangSmithClient();
+        await lsClient.createFeedback(run.id, "invented_paths_score", {
+          score: evalResult.score,
+          comment: evalResult.passed
+            ? "No invented paths"
+            : `Invented: ${evalResult.inventedPaths.join(", ")}`,
+        });
+      }
     } catch (e) {
       console.warn("[AI] LangSmith patchRun failed:", e);
     }
@@ -362,6 +435,7 @@ export async function explainFolder(params: ExplainFolderParams): Promise<Explai
     contentHash,
     model: PINNED_MODEL,
     tracingActive,
+    evalResult,
   };
 }
 

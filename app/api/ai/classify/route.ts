@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClerkSupabaseServerClient } from "@/lib/supabase/server";
-import { classifyFileRole, isTracingConfigured } from "@/lib/ai/client";
+import { classifyFileRole } from "@/lib/ai/client";
 import { parseGitHubUrl } from "@/lib/pipeline/fetcher";
 
 interface ClassifyRequestBody {

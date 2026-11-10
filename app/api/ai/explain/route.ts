@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClerkSupabaseServerClient } from "@/lib/supabase/server";
-import { explainFile, explainFolder, isTracingConfigured } from "@/lib/ai/client";
+import { explainFile, explainFolder } from "@/lib/ai/client";
 import { parseGitHubUrl } from "@/lib/pipeline/fetcher";
 
 interface ExplainRequestBody {

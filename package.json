@@ -9,7 +9,11 @@
     "parse": "node --experimental-strip-types lib/parser/cli.ts",
     "seed": "node scripts/seed-db.mjs",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "eval:paths": "node --experimental-strip-types scripts/evals/invented-paths.ts",
+    "eval:roles": "node --experimental-strip-types scripts/evals/role-accuracy.ts",
+    "eval:prompts": "node --experimental-strip-types scripts/evals/prompt-comparison.ts",
+    "evals": "node --experimental-strip-types scripts/evals/invented-paths.ts && node --experimental-strip-types scripts/evals/role-accuracy.ts && node --experimental-strip-types scripts/evals/prompt-comparison.ts"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.9.23",

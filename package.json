@@ -10,10 +10,10 @@
     "seed": "node scripts/seed-db.mjs",
     "start": "next start",
     "lint": "eslint",
-    "eval:paths": "node --experimental-strip-types scripts/evals/invented-paths.ts",
-    "eval:roles": "node --experimental-strip-types scripts/evals/role-accuracy.ts",
-    "eval:prompts": "node --experimental-strip-types scripts/evals/prompt-comparison.ts",
-    "evals": "node --experimental-strip-types scripts/evals/invented-paths.ts && node --experimental-strip-types scripts/evals/role-accuracy.ts && node --experimental-strip-types scripts/evals/prompt-comparison.ts"
+    "eval:paths": "node --no-warnings --experimental-strip-types scripts/evals/invented-paths.ts",
+    "eval:roles": "node --no-warnings --experimental-strip-types scripts/evals/role-accuracy.ts",
+    "eval:prompts": "node --no-warnings --experimental-strip-types scripts/evals/prompt-comparison.ts",
+    "evals": "node --no-warnings --experimental-strip-types scripts/evals/invented-paths.ts && node --no-warnings --experimental-strip-types scripts/evals/role-accuracy.ts && node --no-warnings --experimental-strip-types scripts/evals/prompt-comparison.ts"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.9.23",

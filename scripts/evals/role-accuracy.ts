@@ -163,8 +163,7 @@ async function main() {
       } catch (err: unknown) {
         const is429 = (err as { status?: number })?.status === 429;
         if (is429 && attempt < 4) {
-          process.stdout.write(" [429 rate limit, pausing 12s...] ");
-          await new Promise((r) => setTimeout(r, 12000));
+          await new Promise((r) => setTimeout(r, 8000 * (attempt + 1)));
           continue;
         }
         throw err;
@@ -175,8 +174,8 @@ async function main() {
       throw new Error(`Failed to classify ${item.filePath}`);
     }
 
-    // Brief pacing between calls to stay under RPM
-    await new Promise((r) => setTimeout(r, 1500));
+    // Pacing between calls to stay reliably under 15 RPM free-tier limit
+    await new Promise((r) => setTimeout(r, 3500));
 
     const predictedRaw = (completion.choices[0]?.message?.content || "")
       .toLowerCase()

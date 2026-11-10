@@ -113,13 +113,12 @@ async function createCompletionWithRetry(
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
       const res = await client.chat.completions.create(params);
-      await new Promise((r) => setTimeout(r, 1200));
+      await new Promise((r) => setTimeout(r, 3500));
       return res;
     } catch (err: unknown) {
       const is429 = (err as { status?: number })?.status === 429;
       if (is429 && attempt < 4) {
-        process.stdout.write(" [429 rate limit, pausing 15s...] ");
-        await new Promise((r) => setTimeout(r, 15000));
+        await new Promise((r) => setTimeout(r, 8000 * (attempt + 1)));
         continue;
       }
       throw err;

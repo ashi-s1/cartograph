@@ -192,6 +192,10 @@ export function AnalysisExplorer({
               onSelectNode={handleSelectNode}
               hoveredTarget={hoveredTarget}
               onHoverTarget={handleHoverTarget}
+              analysisId={analysisId}
+              commitSha={commitSha}
+              repositoryUrl={repositoryUrl}
+              onRerun={handleRerun}
             />
           }
         >

@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { getOrEnsureCurrentOrg } from "@/lib/auth/org";
 import { createClerkSupabaseServerClient } from "@/lib/supabase/server";
 import { AppShell } from "@/components/app-shell";

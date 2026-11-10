@@ -53,6 +53,15 @@ export function AppShell({ children, fluid = false }: AppShellProps) {
                 />
               </ClerkLoaded>
             </div>
+
+            <span className="text-sm font-light text-muted-foreground/40">/</span>
+
+            <Link
+              href="/evals"
+              className="text-xs font-medium text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-md hover:bg-muted/60"
+            >
+              Evals
+            </Link>
           </div>
 
           <div className="flex items-center gap-3">

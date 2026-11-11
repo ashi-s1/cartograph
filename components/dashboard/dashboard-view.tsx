@@ -70,6 +70,44 @@ export function DashboardView({
     setAnalyses(initialAnalyses);
   }, [initialAnalyses]);
 
+  // Handle pending repository submitted from the landing page hero
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const repoFromQuery = params.get("repo");
+    const repoFromStorage = sessionStorage.getItem("cartograph_pending_repo");
+    const targetRepo = repoFromQuery || repoFromStorage;
+
+    if (targetRepo && !submitting) {
+      sessionStorage.removeItem("cartograph_pending_repo");
+      // Clean query parameter from URL without reload
+      if (repoFromQuery) {
+        window.history.replaceState({}, "", window.location.pathname);
+      }
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setUrl(targetRepo);
+      setSubmitting(true);
+      setError(null);
+
+      fetch("/api/analyses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repositoryUrl: targetRepo.trim() }),
+      })
+        .then(async (res) => {
+          const data = await res.json();
+          if (!res.ok) {
+            throw new Error(data.error || "Failed to start repository analysis");
+          }
+          router.push(`/analyses/${data.analysisId}`);
+        })
+        .catch((err) => {
+          setError(err.message || "An unexpected error occurred");
+          setSubmitting(false);
+        });
+    }
+  }, [router, submitting]);
+
   // Realtime subscription to the organization channel
   useEffect(() => {
     if (!orgId) return;

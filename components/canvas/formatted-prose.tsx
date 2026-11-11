@@ -58,7 +58,7 @@ export function FormattedProse({
    * Parses inline formatting: bold (**), inline code (`), and path links.
    * Strips any leftover unclosed markers so no stray symbols exist in output.
    */
-  const renderInline = (text: string): React.ReactNode[] => {
+  const renderInline = (text: string, inlineKeyPrefix = "inl"): React.ReactNode[] => {
     // 1. Convert any accidental headings (#...) at start of text into bold
     const cleaned = text.replace(/^#+\s*(.*)$/, "**$1**");
 
@@ -72,15 +72,22 @@ export function FormattedProse({
       // Plain text segment before the match
       if (match.index > lastIndex) {
         const plain = cleaned.slice(lastIndex, match.index);
-        tokens.push(...renderPlainTextWithLinks(plain, resolvePath, onSelectPath));
+        tokens.push(
+          ...renderPlainTextWithLinks(
+            plain,
+            `${inlineKeyPrefix}-pre-${lastIndex}`,
+            resolvePath,
+            onSelectPath
+          )
+        );
       }
 
       const matchText = match[0];
       if (matchText.startsWith("**") && matchText.endsWith("**")) {
         const inner = matchText.slice(2, -2).trim();
         tokens.push(
-          <strong key={`b-${match.index}`} className="font-semibold text-zinc-100">
-            {renderInline(inner)}
+          <strong key={`${inlineKeyPrefix}-b-${match.index}`} className="font-semibold text-zinc-100">
+            {renderInline(inner, `${inlineKeyPrefix}-b-${match.index}`)}
           </strong>
         );
       } else if (matchText.startsWith("`") && matchText.endsWith("`")) {
@@ -90,7 +97,7 @@ export function FormattedProse({
         if (matchedPath && onSelectPath) {
           tokens.push(
             <button
-              key={`link-${match.index}`}
+              key={`${inlineKeyPrefix}-link-${match.index}`}
               type="button"
               onClick={() => onSelectPath(matchedPath)}
               title={`Focus ${matchedPath} on map`}
@@ -103,7 +110,7 @@ export function FormattedProse({
         } else {
           tokens.push(
             <code
-              key={`c-${match.index}`}
+              key={`${inlineKeyPrefix}-c-${match.index}`}
               className="rounded bg-zinc-800/90 px-1 py-0.5 font-mono text-[11px] text-zinc-200 border border-zinc-700/50 mx-0.5"
             >
               {inner}
@@ -118,7 +125,14 @@ export function FormattedProse({
     // Trailing plain text
     if (lastIndex < cleaned.length) {
       const remaining = cleaned.slice(lastIndex);
-      tokens.push(...renderPlainTextWithLinks(remaining, resolvePath, onSelectPath));
+      tokens.push(
+        ...renderPlainTextWithLinks(
+          remaining,
+          `${inlineKeyPrefix}-post-${lastIndex}`,
+          resolvePath,
+          onSelectPath
+        )
+      );
     }
 
     return tokens;
@@ -135,7 +149,7 @@ export function FormattedProse({
         <ul key={key} className="space-y-1.5 my-2 pl-4 list-disc marker:text-zinc-500">
           {currentBullets.map((bullet, i) => (
             <li key={i} className="text-xs text-zinc-300 leading-relaxed">
-              {renderInline(bullet)}
+              {renderInline(bullet, `${key}-b-${i}`)}
             </li>
           ))}
         </ul>
@@ -159,7 +173,7 @@ export function FormattedProse({
       flushBullets(`bullets-before-${i}`);
       blocks.push(
         <p key={`p-${i}`} className="text-xs text-zinc-300 leading-relaxed mb-2.5">
-          {renderInline(rawLine)}
+          {renderInline(rawLine, `p-${i}`)}
         </p>
       );
     }
@@ -175,6 +189,7 @@ export function FormattedProse({
  */
 function renderPlainTextWithLinks(
   plainText: string,
+  keyPrefix: string,
   resolvePath: (token: string) => string | null,
   onSelectPath?: (path: string) => void
 ): React.ReactNode[] {
@@ -190,7 +205,7 @@ function renderPlainTextWithLinks(
       const cleanWord = punctuation ? word.slice(0, -punctuation.length) : word;
 
       return (
-        <React.Fragment key={`plain-link-${idx}`}>
+        <React.Fragment key={`${keyPrefix}-link-${idx}`}>
           <button
             type="button"
             onClick={() => onSelectPath(path)}
@@ -204,6 +219,6 @@ function renderPlainTextWithLinks(
         </React.Fragment>
       );
     }
-    return <span key={`text-${idx}`}>{word}</span>;
+    return <span key={`${keyPrefix}-text-${idx}`}>{word}</span>;
   });
 }

@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "agent": "pnpm --dir agent start",
     "build": "next build",
+    "agent-key": "node --no-warnings --experimental-strip-types scripts/agent-key.ts",
     "map-counts": "node --experimental-strip-types scripts/map-counts.ts",
     "parse": "node --experimental-strip-types lib/parser/cli.ts",
     "seed": "node scripts/seed-db.mjs",

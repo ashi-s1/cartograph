@@ -21,10 +21,12 @@ import {
   RotateCw,
   CheckCircle2,
   Tag,
+  Bot,
 } from "lucide-react";
 import type { ParserResult, ParsedFile } from "@/lib/parser/types";
 import type { FoldedNode } from "@/lib/canvas/folding";
 import { FormattedProse } from "@/components/canvas/formatted-prose";
+import { AskPanel } from "@/components/canvas/ask-panel";
 import {
   classifyFile,
   computeRepoSummary,
@@ -65,6 +67,8 @@ interface DetailPaneProps {
   commitSha?: string | null;
   repositoryUrl?: string | null;
   onRerun?: () => void;
+  paneMode?: "overview" | "ask";
+  onPaneModeChange?: (mode: "overview" | "ask") => void;
 }
 
 function getMethodBadgeClass(method: string): string {
@@ -95,7 +99,13 @@ export function DetailPane({
   analysisId,
   commitSha,
   onRerun,
+  paneMode: controlledPaneMode,
+  onPaneModeChange,
 }: DetailPaneProps) {
+  const [internalPaneMode, setInternalPaneMode] = useState<"overview" | "ask">("overview");
+  const paneMode = controlledPaneMode !== undefined ? controlledPaneMode : internalPaneMode;
+  const setPaneMode = onPaneModeChange || setInternalPaneMode;
+
   const selectedFile = selection?.file;
   const selectedNode = selection?.node;
 
@@ -350,37 +360,77 @@ export function DetailPane({
       aria-label="Detail inspection pane"
       className="flex w-96 shrink-0 flex-col border-l border-zinc-800 bg-[#0e1013]/90 backdrop-blur-xs select-none"
     >
-      {/* Settled Two Tabs Header: Structure & Explanation */}
-      <div className="flex h-11 border-b border-zinc-800/80 bg-[#0f1117] px-2">
+      {/* Top-Level Mode Tabs: Overview vs Ask */}
+      <div className="flex h-10 border-b border-zinc-800 bg-[#0c0d12] px-2 shrink-0">
         <button
           type="button"
-          onClick={() => onTabChange("structure")}
+          onClick={() => setPaneMode("overview")}
           className={`flex flex-1 items-center justify-center gap-1.5 border-b-2 font-mono text-xs font-medium transition-colors cursor-pointer ${
-            activeTab === "structure"
+            paneMode === "overview"
               ? "border-sky-400 text-sky-400"
               : "border-transparent text-zinc-400 hover:text-zinc-200"
           }`}
         >
           <Layers className="h-3.5 w-3.5" />
-          <span>Structure</span>
+          <span>Overview</span>
         </button>
 
         <button
           type="button"
-          onClick={() => onTabChange("explanation")}
+          onClick={() => setPaneMode("ask")}
           className={`flex flex-1 items-center justify-center gap-1.5 border-b-2 font-mono text-xs font-medium transition-colors cursor-pointer ${
-            activeTab === "explanation"
+            paneMode === "ask"
               ? "border-sky-400 text-sky-400"
               : "border-transparent text-zinc-400 hover:text-zinc-200"
           }`}
         >
-          <Sparkles className="h-3.5 w-3.5" />
-          <span>Explanation</span>
+          <Bot className="h-3.5 w-3.5" />
+          <span>Ask</span>
         </button>
       </div>
 
-      {/* Pane Content Body */}
-      <div className="flex-1 overflow-y-auto p-4 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-zinc-800">
+      {paneMode === "ask" ? (
+        <div className="flex-1 overflow-hidden">
+          <AskPanel
+            analysisId={analysisId}
+            selection={selection}
+            onSelectFile={onSelectFile}
+            knownPaths={allRepoPaths}
+          />
+        </div>
+      ) : (
+        <>
+          {/* Settled Two Tabs Header: Structure & Explanation */}
+          <div className="flex h-10 border-b border-zinc-800/80 bg-[#0f1117] px-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => onTabChange("structure")}
+              className={`flex flex-1 items-center justify-center gap-1.5 border-b-2 font-mono text-xs font-medium transition-colors cursor-pointer ${
+                activeTab === "structure"
+                  ? "border-sky-400 text-sky-400"
+                  : "border-transparent text-zinc-400 hover:text-zinc-200"
+              }`}
+            >
+              <Folder className="h-3.5 w-3.5" />
+              <span>Structure</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onTabChange("explanation")}
+              className={`flex flex-1 items-center justify-center gap-1.5 border-b-2 font-mono text-xs font-medium transition-colors cursor-pointer ${
+                activeTab === "explanation"
+                  ? "border-sky-400 text-sky-400"
+                  : "border-transparent text-zinc-400 hover:text-zinc-200"
+              }`}
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              <span>Explanation</span>
+            </button>
+          </div>
+
+          {/* Pane Content Body */}
+          <div className="flex-1 overflow-y-auto p-4 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-zinc-800">
         {activeTab === "explanation" ? (
           /* ======================================================== */
           /* EXPLANATION TAB: Phase 10 Cached & Traced Explanation     */
@@ -1513,6 +1563,8 @@ export function DetailPane({
           </div>
         )}
       </div>
+        </>
+      )}
     </aside>
   );
 }

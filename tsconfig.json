@@ -45,6 +45,7 @@
     "node_modules",
     "excalidraw",
     "test-fixtures",
-    "agent"
+    "agent",
+    "cartograph-agent"
   ]
 }

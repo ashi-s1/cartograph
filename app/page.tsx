@@ -1,10 +1,12 @@
 export const dynamic = "force-dynamic";
 
+import { auth } from "@clerk/nextjs/server";
 import { getOrEnsureCurrentOrg } from "@/lib/auth/org";
 import { createClerkSupabaseServerClient } from "@/lib/supabase/server";
 import { AppShell } from "@/components/app-shell";
 import { OrgSync } from "@/components/org-sync";
 import { DashboardView, type AnalysisRecord } from "@/components/dashboard/dashboard-view";
+import { LandingPage } from "@/components/landing/landing-page";
 import React, { Suspense } from "react";
 
 async function OrgWorkspaceContent() {
@@ -85,7 +87,13 @@ function WorkspaceSkeleton() {
   );
 }
 
-export default function HomePage() {
+export default async function HomePage() {
+  const { userId } = await auth();
+
+  if (!userId) {
+    return <LandingPage />;
+  }
+
   return (
     <AppShell>
       <Suspense fallback={<WorkspaceSkeleton />}>

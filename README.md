@@ -61,9 +61,11 @@ LANGSMITH_API_KEY=your-langsmith-key
 
 ---
 
-## Quickstart (Running Locally)
+## Quickstart: How to Run the App & Access the Agent
 
-### 1. Install Dependencies
+To use the Cartograph interface and converse with the AI agent, you must run **both** services in separate terminal windows:
+
+### 1. Install Dependencies (First Time Only)
 ```bash
 # Install root web app dependencies
 pnpm install
@@ -72,42 +74,37 @@ pnpm install
 cd agent && pnpm install && cd ..
 ```
 
-### 2. Start the Servers
-
-You will need **two terminal tabs/windows**:
-
-#### Terminal 1 — Start Web Application (Port 3000)
-```bash
-pnpm dev
-```
-Open **[http://localhost:3000](http://localhost:3000)** in your browser to access the dashboard and interactive canvas.
-
-#### Terminal 2 — Start Agent Service (Port 3001)
+### 2. Start the Agent Service (Terminal 1)
 ```bash
 pnpm agent
 ```
-*Alternatively, you can run `cd agent && pnpm start`.*
+- **Port:** `http://localhost:3001`
+- **Role:** Headless AI agent backend that executes AST graph analysis tools (`repo_summary`, `file_neighbors`, `transitive_walk`, etc.) and streams answers back to the UI.
 
-Once running, you will see:
-```text
-=========================================
- Cartograph Agent Server running on http://127.0.0.1:3001
- Health endpoint: http://127.0.0.1:3001/health
- Registered 6 graph analysis tools
-=========================================
+### 3. Start the Web Dev Server (Terminal 2)
+```bash
+pnpm dev
 ```
+- **Port:** `http://localhost:3000`
+- **Role:** Main visual user interface with interactive canvas graph, repository explorer, and the agent chat panel.
 
 ---
 
-## Using the Ask Section
+## How to Access the Agent Conversation
 
-1. Navigate to any analysis in your browser (`http://localhost:3000/analyses/[id]`).
-2. At the top of the right-hand pane, click the **Ask** tab (switches mode between **Overview** and **Ask**).
-3. Try asking:
+Once both servers are running:
+
+1. Open your browser and go to **[http://localhost:3000](http://localhost:3000)**.
+2. Open your repository analysis (e.g., `http://localhost:3000/analyses/<your-analysis-id>`).
+3. In the right-hand panel, click the **Ask** tab (located next to *Overview*).
+4. Enter any question about your codebase into the input box:
+   - *"What are the key entrypoints?"*
    - *"Where is authentication handled?"*
-   - *"What breaks if I change or remove this file?"* (multi-turn follow-up with a file selected)
+   - *"What breaks if I change or remove this file?"*
    - *"What does the route table look like?"*
-4. Watch the agent stream tool calls in real time (`search_files`, `file_neighbors`, `transitive_walk`) and provide grounded answers with clickable repository file links that focus directly on the canvas graph.
+5. The agent will query the AST graph, cite verified file paths with clickable canvas links, and stream its response in real time!
+
+> **Note:** If you navigate directly to `http://localhost:3001` in your browser, you will see the Agent Service Status Dashboard. The chat conversation lives inside the Cartograph web UI at `http://localhost:3000` under the **Ask** tab.
 
 ---
 

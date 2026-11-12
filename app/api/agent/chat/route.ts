@@ -66,7 +66,7 @@ export async function POST(req: Request) {
     });
 
     // 3. Load analysis data strictly for this analysis & org
-    const analysisData = await loadVerifiedAnalysis(analysisId, orgId);
+    const analysisData = await loadVerifiedAnalysis(analysisId, orgId, supabase);
 
     // 4. Relay to local agent service over HTTP
     let agentResponse: Response;

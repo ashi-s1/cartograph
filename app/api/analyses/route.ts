@@ -151,12 +151,16 @@ export async function POST(req: NextRequest) {
     // 3. Create job-authenticated client with renewable credentials for background task
     let initialToken: string | null = null;
     try {
-      initialToken = await getToken({ template: "supabase" });
-    } catch {
       initialToken = await getToken();
+    } catch {
+      // fallback
     }
     if (!initialToken) {
-      initialToken = await getToken();
+      try {
+        initialToken = await getToken({ template: "supabase" });
+      } catch {
+        initialToken = null;
+      }
     }
 
     const jobSupabase = createJobSupabaseServerClient({

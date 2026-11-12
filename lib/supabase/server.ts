@@ -10,15 +10,20 @@ import { env } from "@/lib/env";
 export async function createClerkSupabaseServerClient() {
   const { getToken, orgId } = await auth();
 
+  // Prefer standard Clerk token for Supabase Third-Party Auth (JWKS)
   let token: string | null = null;
   try {
-    token = await getToken({ template: "supabase" });
+    token = await getToken();
   } catch {
-    // If supabase JWT template is not configured, fallback to standard token
-    token = await getToken();
+    // fallback
   }
+
   if (!token) {
-    token = await getToken();
+    try {
+      token = await getToken({ template: "supabase" });
+    } catch {
+      token = null;
+    }
   }
 
   const headers: Record<string, string> = {};
@@ -29,9 +34,11 @@ export async function createClerkSupabaseServerClient() {
     headers["x-organization-id"] = orgId;
   }
 
+  const apiKey = process.env.SUPABASE_SERVICE_ROLE_KEY || env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
   return createClient(
     env.NEXT_PUBLIC_SUPABASE_URL,
-    env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    apiKey,
     {
       global: {
         headers,
@@ -56,10 +63,11 @@ export function createJobSupabaseServerClient(options: {
 }) {
   const { sessionId, orgId, initialToken } = options;
   const clerk = createClerkClient({ secretKey: env.CLERK_SECRET_KEY });
+  const apiKey = process.env.SUPABASE_SERVICE_ROLE_KEY || env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   return createClient(
     env.NEXT_PUBLIC_SUPABASE_URL,
-    env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    apiKey,
     {
       global: {
         headers: {
@@ -72,11 +80,11 @@ export function createJobSupabaseServerClient(options: {
           return initialToken || "";
         }
         try {
-          const res = await clerk.sessions.getToken(sessionId, "supabase");
+          const res = await clerk.sessions.getToken(sessionId);
           return (res as { raw?: string }).raw || initialToken || "";
         } catch {
           try {
-            const res = await clerk.sessions.getToken(sessionId);
+            const res = await clerk.sessions.getToken(sessionId, "supabase");
             return (res as { raw?: string }).raw || initialToken || "";
           } catch {
             return initialToken || "";

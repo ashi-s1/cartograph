@@ -1,8 +1,12 @@
+export const dynamic = "force-dynamic";
+
+import { auth } from "@clerk/nextjs/server";
 import { getOrEnsureCurrentOrg } from "@/lib/auth/org";
 import { createClerkSupabaseServerClient } from "@/lib/supabase/server";
 import { AppShell } from "@/components/app-shell";
 import { OrgSync } from "@/components/org-sync";
 import { DashboardView, type AnalysisRecord } from "@/components/dashboard/dashboard-view";
+import { LandingPage } from "@/components/landing/landing-page";
 import React, { Suspense } from "react";
 
 async function OrgWorkspaceContent() {
@@ -48,10 +52,25 @@ async function OrgWorkspaceContent() {
       )}
 
       {error ? (
-        <div className="rounded-md border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300">
-          <div className="font-semibold">Unable to fetch analyses</div>
-          <div className="mt-1 text-[11px] opacity-90">{error.message}</div>
-        </div>
+        error.message?.toLowerCase().includes("jwt") || error.message?.toLowerCase().includes("expired") ? (
+          <div className="flex flex-col items-center justify-center rounded-lg border border-border/70 bg-card p-8 text-center space-y-3">
+            <div className="text-sm font-semibold text-foreground">Session Refreshed</div>
+            <p className="text-xs text-muted-foreground max-w-sm">
+              Your security token was refreshed after being idle. Click below to view your analyses.
+            </p>
+            <a
+              href="/"
+              className="rounded-md bg-primary px-4 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+            >
+              Reload Workspace
+            </a>
+          </div>
+        ) : (
+          <div className="rounded-md border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300">
+            <div className="font-semibold">Unable to fetch analyses</div>
+            <div className="mt-1 text-[11px] opacity-90">{error.message}</div>
+          </div>
+        )
       ) : (
         <DashboardView
           initialAnalyses={analyses}
@@ -83,7 +102,13 @@ function WorkspaceSkeleton() {
   );
 }
 
-export default function HomePage() {
+export default async function HomePage() {
+  const { userId } = await auth();
+
+  if (!userId) {
+    return <LandingPage />;
+  }
+
   return (
     <AppShell>
       <Suspense fallback={<WorkspaceSkeleton />}>

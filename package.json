@@ -4,12 +4,18 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "agent": "pnpm --dir agent start",
     "build": "next build",
+    "agent-key": "node --no-warnings --experimental-strip-types scripts/agent-key.ts",
     "map-counts": "node --experimental-strip-types scripts/map-counts.ts",
     "parse": "node --experimental-strip-types lib/parser/cli.ts",
     "seed": "node scripts/seed-db.mjs",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "eval:paths": "node --no-warnings --experimental-strip-types scripts/evals/invented-paths.ts",
+    "eval:roles": "node --no-warnings --experimental-strip-types scripts/evals/role-accuracy.ts",
+    "eval:prompts": "node --no-warnings --experimental-strip-types scripts/evals/prompt-comparison.ts",
+    "evals": "node --no-warnings --experimental-strip-types scripts/evals/invented-paths.ts && node --no-warnings --experimental-strip-types scripts/evals/role-accuracy.ts && node --no-warnings --experimental-strip-types scripts/evals/prompt-comparison.ts"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.9.23",
@@ -17,9 +23,11 @@
     "@supabase/supabase-js": "^2.118.0",
     "@xyflow/react": "^12.12.0",
     "dagre": "^0.8.5",
+    "langsmith": "^0.11.8",
     "lucide-react": "^1.66.0",
     "next": "16.4.3",
     "next-themes": "^0.4.6",
+    "openai": "^7.51.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "ts-morph": "^28.0.0"

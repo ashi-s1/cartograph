@@ -24,6 +24,7 @@ export function AnalysisExplorer({
   repoName = initialData.repositoryRoot,
   commitSha = null,
   repositoryUrl = null,
+  analysisId,
 }: AnalysisExplorerProps) {
   const router = useRouter();
   const [isRerunning, startRerunTransition] = useTransition();
@@ -192,6 +193,10 @@ export function AnalysisExplorer({
               onSelectNode={handleSelectNode}
               hoveredTarget={hoveredTarget}
               onHoverTarget={handleHoverTarget}
+              analysisId={analysisId}
+              commitSha={commitSha}
+              repositoryUrl={repositoryUrl}
+              onRerun={handleRerun}
             />
           }
         >

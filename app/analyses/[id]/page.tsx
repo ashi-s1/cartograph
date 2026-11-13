@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import React, { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { createClerkSupabaseServerClient } from "@/lib/supabase/server";

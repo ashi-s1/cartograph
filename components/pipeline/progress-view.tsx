@@ -45,22 +45,25 @@ export function ProgressView({ analysis }: { analysis: ProgressAnalysisProps }) 
   const [errorMessage, setErrorMessage] = useState<string | null>(analysis.error_message);
   const [commitSha, setCommitSha] = useState<string | null>(analysis.commit_sha);
   const [isRetrying, setIsRetrying] = useState<boolean>(false);
-  const [elapsedSeconds, setElapsedSeconds] = useState<number>(() => {
+  const [isMounted, setIsMounted] = useState<boolean>(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
+
+  // Track elapsed time while running and avoid hydration mismatch
+  useEffect(() => {
+    setIsMounted(true);
     if (analysis.status === "running") {
       const ms = Date.now() - new Date(analysis.created_at).getTime();
-      return Math.max(0, Math.floor(ms / 1000));
+      setElapsedSeconds(Math.max(0, Math.floor(ms / 1000)));
     }
-    return 0;
-  });
+  }, [analysis.status, analysis.created_at]);
 
-  // Track elapsed time while running
   useEffect(() => {
-    if (status !== "running") return;
+    if (status !== "running" || !isMounted) return;
     const timer = setInterval(() => {
       setElapsedSeconds((prev) => prev + 1);
     }, 1000);
     return () => clearInterval(timer);
-  }, [status]);
+  }, [status, isMounted]);
 
   async function handleRetry() {
     if (isRetrying || !analysis.project?.repository_url) return;
@@ -208,8 +211,8 @@ export function ProgressView({ analysis }: { analysis: ProgressAnalysisProps }) 
             </div>
 
             <div className="flex items-center gap-2">
-              {status === "running" && (
-                <span className="font-mono text-[11px] text-muted-foreground">
+              {status === "running" && isMounted && (
+                <span suppressHydrationWarning className="font-mono text-[11px] text-muted-foreground">
                   {elapsedSeconds}s
                 </span>
               )}

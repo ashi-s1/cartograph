@@ -18,9 +18,15 @@ import {
   ChevronDown,
   ChevronRight,
   AlertTriangle,
+  RotateCw,
+  CheckCircle2,
+  Tag,
+  Bot,
 } from "lucide-react";
 import type { ParserResult, ParsedFile } from "@/lib/parser/types";
 import type { FoldedNode } from "@/lib/canvas/folding";
+import { FormattedProse } from "@/components/canvas/formatted-prose";
+import { AskPanel } from "@/components/canvas/ask-panel";
 import {
   classifyFile,
   computeRepoSummary,
@@ -57,6 +63,12 @@ interface DetailPaneProps {
   onSelectNode: (nodeId: string) => void;
   hoveredTarget: HoverTarget | null;
   onHoverTarget: (target: HoverTarget | null) => void;
+  analysisId?: string;
+  commitSha?: string | null;
+  repositoryUrl?: string | null;
+  onRerun?: () => void;
+  paneMode?: "overview" | "ask";
+  onPaneModeChange?: (mode: "overview" | "ask") => void;
 }
 
 function getMethodBadgeClass(method: string): string {
@@ -84,7 +96,16 @@ export function DetailPane({
   onSelectFile,
   hoveredTarget,
   onHoverTarget,
+  analysisId,
+  commitSha,
+  onRerun,
+  paneMode: controlledPaneMode,
+  onPaneModeChange,
 }: DetailPaneProps) {
+  const [internalPaneMode, setInternalPaneMode] = useState<"overview" | "ask">("overview");
+  const paneMode = controlledPaneMode !== undefined ? controlledPaneMode : internalPaneMode;
+  const setPaneMode = onPaneModeChange || setInternalPaneMode;
+
   const selectedFile = selection?.file;
   const selectedNode = selection?.node;
 
@@ -97,6 +118,110 @@ export function DetailPane({
 
   // Route search filter
   const [routeSearchQuery, setRouteSearchQuery] = useState("");
+
+  // AI-classified roles override
+  const [dynamicRoles, setDynamicRoles] = useState<Record<string, string>>({});
+  const [isClassifyingRole, setIsClassifyingRole] = useState(false);
+
+  // Client-side explanation cache: persists across selection changes!
+  interface CachedExplanationUI {
+    content: string;
+    cached: boolean;
+    isStale: boolean;
+    commitSha: string | null;
+    latestCommitSha: string | null;
+    tracingActive: boolean;
+  }
+  const [explanationsCache, setExplanationsCache] = useState<Record<string, CachedExplanationUI>>({});
+  const [explainingTargets, setExplainingTargets] = useState<Record<string, boolean>>({});
+  const [explainErrors, setExplainErrors] = useState<Record<string, string | null>>({});
+  const selectedCacheKey = selectedFile?.path ?? (selectedNode ? `folder:${selectedNode.folder}` : "");
+  const isExplaining = explainingTargets[selectedCacheKey] ?? false;
+  const explainError = explainErrors[selectedCacheKey] ?? null;
+
+  // Set of all repository file paths for linkifying prose
+  const allRepoPaths = useMemo(() => {
+    const paths = new Set<string>();
+    for (const f of data.files) {
+      paths.add(f.path);
+    }
+    return paths;
+  }, [data.files]);
+
+  // Handle Explain request
+  const handleExplain = async (targetType: "file" | "folder", targetPath: string) => {
+    if (!analysisId) return;
+    const cacheKey = targetType === "file" ? targetPath : `folder:${targetPath}`;
+    setExplainingTargets((prev) => ({ ...prev, [cacheKey]: true }));
+    setExplainErrors((prev) => ({ ...prev, [cacheKey]: null }));
+
+    try {
+      const res = await fetch("/api/ai/explain", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          analysisId,
+          targetType,
+          targetPath,
+        }),
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || `HTTP ${res.status}`);
+      }
+
+      const result = await res.json();
+      setExplanationsCache((prev) => ({
+        ...prev,
+        [cacheKey]: {
+          content: result.content,
+          cached: result.cached,
+          isStale: result.isStale,
+          commitSha: result.commitSha,
+          latestCommitSha: result.latestCommitSha,
+          tracingActive: result.tracingActive,
+        },
+      }));
+    } catch (err) {
+      setExplainErrors((prev) => ({ ...prev, [cacheKey]: err instanceof Error ? err.message : "Failed to generate explanation" }));
+    } finally {
+      setExplainingTargets((prev) => ({ ...prev, [cacheKey]: false }));
+    }
+  };
+
+  // Handle AI Role classification
+  const handleClassifyRole = async (filePath: string) => {
+    if (!analysisId) return;
+    setIsClassifyingRole(true);
+    try {
+      const res = await fetch("/api/ai/classify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          analysisId,
+          filePath,
+        }),
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || `HTTP ${res.status}`);
+      }
+
+      const result = await res.json();
+      if (result.role) {
+        setDynamicRoles((prev) => ({
+          ...prev,
+          [filePath]: result.role,
+        }));
+      }
+    } catch (err) {
+      console.error("Failed to classify role:", err);
+    } finally {
+      setIsClassifyingRole(false);
+    }
+  };
 
   // Map file path -> formal role from parser results
   const roleMap = useMemo(() => {
@@ -224,7 +349,7 @@ export function DetailPane({
 
   // Concrete role of selected file
   const selectedFileRole = selectedFile
-    ? roleMap.get(selectedFile.path) || classifyFile(selectedFile.path).kind
+    ? dynamicRoles[selectedFile.path] || roleMap.get(selectedFile.path) || classifyFile(selectedFile.path).kind
     : null;
   const categoryDef = selectedFileRole
     ? getCategoryDefinition(frameworkType, selectedFileRole)
@@ -235,52 +360,394 @@ export function DetailPane({
       aria-label="Detail inspection pane"
       className="flex w-96 shrink-0 flex-col border-l border-zinc-800 bg-[#0e1013]/90 backdrop-blur-xs select-none"
     >
-      {/* Settled Two Tabs Header: Structure & Explanation */}
-      <div className="flex h-11 border-b border-zinc-800/80 bg-[#0f1117] px-2">
+      {/* Top-Level Mode Tabs: Overview vs Ask */}
+      <div className="flex h-10 border-b border-zinc-800 bg-[#0c0d12] px-2 shrink-0">
         <button
           type="button"
-          onClick={() => onTabChange("structure")}
+          onClick={() => setPaneMode("overview")}
           className={`flex flex-1 items-center justify-center gap-1.5 border-b-2 font-mono text-xs font-medium transition-colors cursor-pointer ${
-            activeTab === "structure"
+            paneMode === "overview"
               ? "border-sky-400 text-sky-400"
               : "border-transparent text-zinc-400 hover:text-zinc-200"
           }`}
         >
           <Layers className="h-3.5 w-3.5" />
-          <span>Structure</span>
+          <span>Overview</span>
         </button>
 
         <button
           type="button"
-          onClick={() => onTabChange("explanation")}
+          onClick={() => setPaneMode("ask")}
           className={`flex flex-1 items-center justify-center gap-1.5 border-b-2 font-mono text-xs font-medium transition-colors cursor-pointer ${
-            activeTab === "explanation"
+            paneMode === "ask"
               ? "border-sky-400 text-sky-400"
               : "border-transparent text-zinc-400 hover:text-zinc-200"
           }`}
         >
-          <Sparkles className="h-3.5 w-3.5" />
-          <span>Explanation</span>
+          <Bot className="h-3.5 w-3.5" />
+          <span>Ask</span>
         </button>
       </div>
 
-      {/* Pane Content Body */}
-      <div className="flex-1 overflow-y-auto p-4 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-zinc-800">
+      {paneMode === "ask" ? (
+        <div className="flex-1 overflow-hidden">
+          <AskPanel
+            analysisId={analysisId}
+            selection={selection}
+            onSelectFile={onSelectFile}
+            knownPaths={allRepoPaths}
+          />
+        </div>
+      ) : (
+        <>
+          {/* Settled Two Tabs Header: Structure & Explanation */}
+          <div className="flex h-10 border-b border-zinc-800/80 bg-[#0f1117] px-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => onTabChange("structure")}
+              className={`flex flex-1 items-center justify-center gap-1.5 border-b-2 font-mono text-xs font-medium transition-colors cursor-pointer ${
+                activeTab === "structure"
+                  ? "border-sky-400 text-sky-400"
+                  : "border-transparent text-zinc-400 hover:text-zinc-200"
+              }`}
+            >
+              <Folder className="h-3.5 w-3.5" />
+              <span>Structure</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onTabChange("explanation")}
+              className={`flex flex-1 items-center justify-center gap-1.5 border-b-2 font-mono text-xs font-medium transition-colors cursor-pointer ${
+                activeTab === "explanation"
+                  ? "border-sky-400 text-sky-400"
+                  : "border-transparent text-zinc-400 hover:text-zinc-200"
+              }`}
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              <span>Explanation</span>
+            </button>
+          </div>
+
+          {/* Pane Content Body */}
+          <div className="flex-1 overflow-y-auto p-4 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-zinc-800">
         {activeTab === "explanation" ? (
           /* ======================================================== */
-          /* EXPLANATION TAB: Settled Empty State                     */
+          /* EXPLANATION TAB: Phase 10 Cached & Traced Explanation     */
           /* ======================================================== */
-          <div className="flex min-h-[300px] flex-col items-center justify-center rounded-xl border border-dashed border-zinc-800/80 bg-zinc-900/20 p-6 text-center">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-800/60 text-zinc-400">
-              <Sparkles className="h-5 w-5" />
+          selectedFile ? (
+            /* 1. Selected File Explanation */
+            <div className="space-y-3.5">
+              {/* Header */}
+              <div className="space-y-1.5 pb-2 border-b border-zinc-800/80">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <FileCode className="h-3.5 w-3.5 text-sky-400 shrink-0" />
+                    <span
+                      className="rounded px-1.5 py-0.5 font-mono text-[10px] font-medium"
+                      style={{
+                        backgroundColor: `${categoryDef?.color || "#64748b"}20`,
+                        color: categoryDef?.color || "#94a3b8",
+                      }}
+                    >
+                      {selectedFileRole}
+                    </span>
+                  </div>
+                  {(!selectedFileRole || ["generic", "unclassified module"].includes(selectedFileRole.toLowerCase())) && (
+                    <button
+                      type="button"
+                      onClick={() => handleClassifyRole(selectedFile.path)}
+                      disabled={isClassifyingRole}
+                      className="inline-flex items-center gap-1 rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-300 hover:text-white border border-zinc-700 cursor-pointer"
+                      title="Assign non-structural role with AI"
+                    >
+                      {isClassifyingRole ? (
+                        <RotateCw className="h-2.5 w-2.5 animate-spin text-sky-400" />
+                      ) : (
+                        <Tag className="h-2.5 w-2.5 text-sky-400" />
+                      )}
+                      <span>Classify role</span>
+                    </button>
+                  )}
+                </div>
+                <div className="font-mono text-xs font-semibold text-zinc-100 break-all select-text">
+                  {selectedFile.path}
+                </div>
+              </div>
+
+              {/* Explanation Content or Prompt */}
+              {explanationsCache[selectedFile.path] ? (
+                (() => {
+                  const exp = explanationsCache[selectedFile.path];
+                  return (
+                    <div className="space-y-3">
+                      {/* Meta Status Badges Bar */}
+                      <div className="flex items-center justify-between gap-1.5 flex-wrap">
+                        <div className="flex items-center gap-1.5">
+                          {exp.cached ? (
+                            <span className="inline-flex items-center gap-1 rounded bg-emerald-950/60 border border-emerald-800/60 px-1.5 py-0.5 font-mono text-[10px] text-emerald-300">
+                              <CheckCircle2 className="h-2.5 w-2.5 text-emerald-400" />
+                              <span>Cached (0 tokens)</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded bg-sky-950/60 border border-sky-800/60 px-1.5 py-0.5 font-mono text-[10px] text-sky-300">
+                              <Sparkles className="h-2.5 w-2.5 text-sky-400" />
+                              <span>Fresh call</span>
+                            </span>
+                          )}
+
+                          <span
+                            className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] border ${
+                              exp.tracingActive
+                                ? "bg-zinc-900 border-zinc-800 text-zinc-300"
+                                : "bg-amber-950/40 border-amber-800/50 text-amber-300"
+                            }`}
+                          >
+                            <span>{exp.tracingActive ? "Traced: cartograph" : "Tracing unconfigured"}</span>
+                          </span>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleExplain("file", selectedFile.path)}
+                          disabled={isExplaining}
+                          className="inline-flex items-center gap-1 rounded bg-zinc-900 px-1.5 py-0.5 font-mono text-[10px] text-zinc-400 hover:text-zinc-200 border border-zinc-800 cursor-pointer"
+                          title="Re-run explanation"
+                        >
+                          <RotateCw className={`h-2.5 w-2.5 ${isExplaining ? "animate-spin text-sky-400" : ""}`} />
+                          <span>Re-explain</span>
+                        </button>
+                      </div>
+
+                      {/* Staleness Banner */}
+                      {exp.isStale && (
+                        <div className="space-y-1.5 rounded-md border border-amber-500/40 bg-amber-950/20 p-2.5">
+                          <div className="flex items-center gap-1.5 font-mono text-[11px] font-semibold text-amber-300">
+                            <AlertTriangle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                            <span>Explanation is stale</span>
+                          </div>
+                          <p className="text-[11px] text-zinc-400 leading-tight">
+                            The repository has moved past analysed commit{" "}
+                            <span className="font-mono text-zinc-200">{commitSha?.slice(0, 7)}</span>
+                            {exp.latestCommitSha && (
+                              <> (latest: <span className="font-mono text-zinc-200">{exp.latestCommitSha.slice(0, 7)}</span>)</>
+                            )}
+                            .
+                          </p>
+                          {onRerun && (
+                            <button
+                              type="button"
+                              onClick={onRerun}
+                              className="mt-1 inline-flex items-center gap-1 rounded bg-amber-500/20 border border-amber-400/40 px-2 py-0.5 font-mono text-[10px] font-medium text-amber-200 hover:bg-amber-500/30 cursor-pointer"
+                            >
+                              <RotateCw className="h-2.5 w-2.5" />
+                              <span>Re-analyse repository</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Formatted Prose Content with Linked Neighbour Paths */}
+                      <div className="rounded-lg border border-zinc-800/90 bg-zinc-950/50 p-3">
+                        <FormattedProse
+                          content={exp.content}
+                          knownPaths={allRepoPaths}
+                          onSelectPath={onSelectFile}
+                        />
+                      </div>
+                    </div>
+                  );
+                })()
+              ) : (
+                <div className="space-y-3 rounded-lg border border-zinc-800 bg-zinc-900/30 p-4 text-center">
+                  <div className="flex h-10 w-10 mx-auto items-center justify-center rounded-lg bg-sky-950/50 text-sky-400 border border-sky-800/50">
+                    <Sparkles className="h-5 w-5" />
+                  </div>
+                  <div className="space-y-1">
+                    <h4 className="font-mono text-xs font-semibold text-zinc-200">
+                      Explain this file
+                    </h4>
+                    <p className="text-[11px] text-zinc-400 leading-snug">
+                      Generates a concise architectural summary written from this file and its real neighbours ({fileDeps.inbound.length} inbound, {fileDeps.outbound.length} imports).
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleExplain("file", selectedFile.path)}
+                    disabled={isExplaining}
+                    className="w-full inline-flex items-center justify-center gap-1.5 rounded-md bg-sky-500/20 border border-sky-400/40 px-3 py-1.5 font-mono text-xs font-semibold text-sky-200 hover:bg-sky-500/30 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {isExplaining ? (
+                      <>
+                        <RotateCw className="h-3.5 w-3.5 animate-spin text-sky-400" />
+                        <span>Explaining file...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-3.5 w-3.5 text-sky-400" />
+                        <span>Explain</span>
+                      </>
+                    )}
+                  </button>
+
+                  {explainError && (
+                    <div className="rounded border border-rose-800/60 bg-rose-950/30 p-2 font-mono text-[10px] text-rose-300">
+                      {explainError}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-            <h4 className="mt-3 font-mono text-xs font-semibold text-zinc-200">
-              Explanation
-            </h4>
-            <p className="mt-1.5 max-w-[240px] text-xs text-zinc-400 leading-relaxed">
-              Nothing fills this until there is an explanation model call to fill it with.
-            </p>
-          </div>
+          ) : selectedNode ? (
+            /* 2. Selected Folded Folder Explanation */
+            <div className="space-y-3.5">
+              {/* Header */}
+              <div className="space-y-1.5 pb-2 border-b border-zinc-800/80">
+                <div className="flex items-center gap-1.5">
+                  <Folder className="h-3.5 w-3.5 text-sky-400 shrink-0" />
+                  <span className="rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-400 uppercase">
+                    Folded Folder &middot; {selectedNode.fileCount} files
+                  </span>
+                </div>
+                <div className="font-mono text-xs font-semibold text-zinc-100 break-all select-text">
+                  {selectedNode.folder === "." ? "Root" : selectedNode.folder}
+                </div>
+              </div>
+
+              {/* Folder Explanation Content or Prompt */}
+              {explanationsCache[`folder:${selectedNode.folder}`] ? (
+                (() => {
+                  const exp = explanationsCache[`folder:${selectedNode.folder}`];
+                  return (
+                    <div className="space-y-3">
+                      {/* Meta Status Badges Bar */}
+                      <div className="flex items-center justify-between gap-1.5 flex-wrap">
+                        <div className="flex items-center gap-1.5">
+                          {exp.cached ? (
+                            <span className="inline-flex items-center gap-1 rounded bg-emerald-950/60 border border-emerald-800/60 px-1.5 py-0.5 font-mono text-[10px] text-emerald-300">
+                              <CheckCircle2 className="h-2.5 w-2.5 text-emerald-400" />
+                              <span>Cached (0 tokens)</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded bg-sky-950/60 border border-sky-800/60 px-1.5 py-0.5 font-mono text-[10px] text-sky-300">
+                              <Sparkles className="h-2.5 w-2.5 text-sky-400" />
+                              <span>Fresh call</span>
+                            </span>
+                          )}
+
+                          <span
+                            className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] border ${
+                              exp.tracingActive
+                                ? "bg-zinc-900 border-zinc-800 text-zinc-300"
+                                : "bg-amber-950/40 border-amber-800/50 text-amber-300"
+                            }`}
+                          >
+                            <span>{exp.tracingActive ? "Traced: cartograph" : "Tracing unconfigured"}</span>
+                          </span>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleExplain("folder", selectedNode.folder)}
+                          disabled={isExplaining}
+                          className="inline-flex items-center gap-1 rounded bg-zinc-900 px-1.5 py-0.5 font-mono text-[10px] text-zinc-400 hover:text-zinc-200 border border-zinc-800 cursor-pointer"
+                          title="Re-run folder explanation"
+                        >
+                          <RotateCw className={`h-2.5 w-2.5 ${isExplaining ? "animate-spin text-sky-400" : ""}`} />
+                          <span>Re-explain</span>
+                        </button>
+                      </div>
+
+                      {/* Staleness Banner */}
+                      {exp.isStale && (
+                        <div className="space-y-1.5 rounded-md border border-amber-500/40 bg-amber-950/20 p-2.5">
+                          <div className="flex items-center gap-1.5 font-mono text-[11px] font-semibold text-amber-300">
+                            <AlertTriangle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                            <span>Explanation is stale</span>
+                          </div>
+                          <p className="text-[11px] text-zinc-400 leading-tight">
+                            The repository commit has moved past {commitSha?.slice(0, 7)}.
+                          </p>
+                          {onRerun && (
+                            <button
+                              type="button"
+                              onClick={onRerun}
+                              className="mt-1 inline-flex items-center gap-1 rounded bg-amber-500/20 border border-amber-400/40 px-2 py-0.5 font-mono text-[10px] font-medium text-amber-200 hover:bg-amber-500/30 cursor-pointer"
+                            >
+                              <RotateCw className="h-2.5 w-2.5" />
+                              <span>Re-analyse repository</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Formatted Prose Content */}
+                      <div className="rounded-lg border border-zinc-800/90 bg-zinc-950/50 p-3">
+                        <FormattedProse
+                          content={exp.content}
+                          knownPaths={allRepoPaths}
+                          onSelectPath={onSelectFile}
+                        />
+                      </div>
+                    </div>
+                  );
+                })()
+              ) : (
+                <div className="space-y-3 rounded-lg border border-zinc-800 bg-zinc-900/30 p-4 text-center">
+                  <div className="flex h-10 w-10 mx-auto items-center justify-center rounded-lg bg-sky-950/50 text-sky-400 border border-sky-800/50">
+                    <Folder className="h-5 w-5" />
+                  </div>
+                  <div className="space-y-1">
+                    <h4 className="font-mono text-xs font-semibold text-zinc-200">
+                      Explain this folded folder
+                    </h4>
+                    <p className="text-[11px] text-zinc-400 leading-snug">
+                      Explains what is in this subsystem ({selectedNode.fileCount} files) and why {folderDeps.inbound.length} external modules point at it.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleExplain("folder", selectedNode.folder)}
+                    disabled={isExplaining}
+                    className="w-full inline-flex items-center justify-center gap-1.5 rounded-md bg-sky-500/20 border border-sky-400/40 px-3 py-1.5 font-mono text-xs font-semibold text-sky-200 hover:bg-sky-500/30 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {isExplaining ? (
+                      <>
+                        <RotateCw className="h-3.5 w-3.5 animate-spin text-sky-400" />
+                        <span>Explaining folder...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-3.5 w-3.5 text-sky-400" />
+                        <span>Explain Folder</span>
+                      </>
+                    )}
+                  </button>
+
+                  {explainError && (
+                    <div className="rounded border border-rose-800/60 bg-rose-950/30 p-2 font-mono text-[10px] text-rose-300">
+                      {explainError}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+            /* 3. Resting State (Nothing selected) */
+            <div className="flex min-h-[300px] flex-col items-center justify-center rounded-xl border border-dashed border-zinc-800/80 bg-zinc-900/20 p-6 text-center">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-800/60 text-zinc-400">
+                <Sparkles className="h-5 w-5" />
+              </div>
+              <h4 className="mt-3 font-mono text-xs font-semibold text-zinc-200">
+                Architectural Explanation
+              </h4>
+              <p className="mt-1.5 max-w-[240px] text-xs text-zinc-400 leading-relaxed">
+                Select a file or folded folder on the map and click Explain to see its role in the context of its actual neighbours.
+              </p>
+            </div>
+          )
         ) : selectedFile ? (
           /* ======================================================== */
           /* STRUCTURE TAB: Selected File View                       */
@@ -288,17 +755,35 @@ export function DetailPane({
           <div className="space-y-4">
             {/* File Path & Framework Concrete Role Header */}
             <div className="space-y-1.5">
-              <div className="flex items-center gap-1.5">
-                <FileCode className="h-3.5 w-3.5 text-sky-400 shrink-0" />
-                <span
-                  className="rounded px-1.5 py-0.5 font-mono text-[10px] font-medium"
-                  style={{
-                    backgroundColor: `${categoryDef?.color || "#64748b"}20`,
-                    color: categoryDef?.color || "#94a3b8",
-                  }}
-                >
-                  {selectedFileRole}
-                </span>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <FileCode className="h-3.5 w-3.5 text-sky-400 shrink-0" />
+                  <span
+                    className="rounded px-1.5 py-0.5 font-mono text-[10px] font-medium"
+                    style={{
+                      backgroundColor: `${categoryDef?.color || "#64748b"}20`,
+                      color: categoryDef?.color || "#94a3b8",
+                    }}
+                  >
+                    {selectedFileRole}
+                  </span>
+                </div>
+                {(!selectedFileRole || ["generic", "unclassified module"].includes(selectedFileRole.toLowerCase())) && (
+                  <button
+                    type="button"
+                    onClick={() => handleClassifyRole(selectedFile.path)}
+                    disabled={isClassifyingRole}
+                    className="inline-flex items-center gap-1 rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-300 hover:text-white border border-zinc-700 cursor-pointer"
+                    title="Assign non-structural role with AI"
+                  >
+                    {isClassifyingRole ? (
+                      <RotateCw className="h-2.5 w-2.5 animate-spin text-sky-400" />
+                    ) : (
+                      <Tag className="h-2.5 w-2.5 text-sky-400" />
+                    )}
+                    <span>Classify role</span>
+                  </button>
+                )}
               </div>
               <div
                 className="font-mono text-xs font-semibold text-zinc-100 break-all select-text"
@@ -1078,6 +1563,8 @@ export function DetailPane({
           </div>
         )}
       </div>
+        </>
+      )}
     </aside>
   );
 }

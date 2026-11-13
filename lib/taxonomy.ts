@@ -87,12 +87,31 @@ export const FRAMEWORK_TAXONOMIES: Record<FrameworkType, FrameworkTaxonomy> = {
 };
 
 /**
+ * Permitted non-structural roles styling map
+ */
+const AI_NON_STRUCTURAL_ROLES: Record<string, { name: string; color: string }> = {
+  service: { name: "service", color: "#34d399" },
+  repository: { name: "repository", color: "#fb923c" },
+  model: { name: "model", color: "#f97316" },
+  util: { name: "util", color: "#fbbf24" },
+  config: { name: "config", color: "#94a3b8" },
+  component: { name: "component", color: "#818cf8" },
+  hook: { name: "hook", color: "#a78bfa" },
+};
+
+/**
  * Returns the fixed category definition for a role in a framework.
  */
 export function getCategoryDefinition(framework: FrameworkType, role: string): CategoryDefinition {
+  const normalizedRole = role.toLowerCase().trim();
+  if (AI_NON_STRUCTURAL_ROLES[normalizedRole]) {
+    const r = AI_NON_STRUCTURAL_ROLES[normalizedRole];
+    return { id: r.name, name: r.name, color: r.color };
+  }
+
   const taxonomy = FRAMEWORK_TAXONOMIES[framework] || FRAMEWORK_TAXONOMIES.fallback;
   const match = taxonomy.categories.find(
-    (c) => c.name.toLowerCase() === role.toLowerCase() || c.id.toLowerCase() === role.toLowerCase()
+    (c) => c.name.toLowerCase() === normalizedRole || c.id.toLowerCase() === normalizedRole
   );
   if (match) return match;
   return { id: role, name: role, color: "#64748b" };

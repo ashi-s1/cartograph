@@ -1,6 +1,6 @@
 "use client";
 
-import { ClerkLoaded, ClerkLoading, OrganizationSwitcher, UserButton } from "@clerk/nextjs";
+import { OrganizationSwitcher, UserButton } from "@clerk/nextjs";
 import { ThemeToggle } from "@/components/theme-toggle";
 import Link from "next/link";
 import React from "react";
@@ -10,7 +10,15 @@ interface AppShellProps {
   fluid?: boolean;
 }
 
+const emptySubscribe = () => () => {};
+
 export function AppShell({ children, fluid = false }: AppShellProps) {
+  const mounted = React.useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false
+  );
+
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground antialiased selection:bg-zinc-800 selection:text-zinc-100">
       {/* Top Navigation Bar */}
@@ -32,10 +40,7 @@ export function AppShell({ children, fluid = false }: AppShellProps) {
 
             {/* Organization Switcher */}
             <div className="flex items-center min-h-[28px]">
-              <ClerkLoading>
-                <div className="h-6 w-28 animate-pulse rounded-md bg-muted/60" />
-              </ClerkLoading>
-              <ClerkLoaded>
+              {mounted ? (
                 <OrganizationSwitcher
                   hidePersonal
                   afterCreateOrganizationUrl="/"
@@ -51,17 +56,25 @@ export function AppShell({ children, fluid = false }: AppShellProps) {
                     },
                   }}
                 />
-              </ClerkLoaded>
+              ) : (
+                <div className="h-6 w-28 animate-pulse rounded-md bg-muted/60" />
+              )}
             </div>
+
+            <span className="text-sm font-light text-muted-foreground/40">/</span>
+
+            <Link
+              href="/evals"
+              className="text-xs font-medium text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-md hover:bg-muted/60"
+            >
+              Evals
+            </Link>
           </div>
 
           <div className="flex items-center gap-3">
             <ThemeToggle />
             <div className="flex items-center min-h-[28px] min-w-[28px]">
-              <ClerkLoading>
-                <div className="h-7 w-7 animate-pulse rounded-full bg-muted/60" />
-              </ClerkLoading>
-              <ClerkLoaded>
+              {mounted ? (
                 <UserButton
                   appearance={{
                     elements: {
@@ -69,7 +82,9 @@ export function AppShell({ children, fluid = false }: AppShellProps) {
                     },
                   }}
                 />
-              </ClerkLoaded>
+              ) : (
+                <div className="h-7 w-7 animate-pulse rounded-full bg-muted/60" />
+              )}
             </div>
           </div>
         </div>

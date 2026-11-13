@@ -13,8 +13,10 @@ const isPublicRoute = createRouteMatcher([
 ]);
 
 export default clerkMiddleware(async (auth, req) => {
+  // Always call auth() so Clerk refreshes and rotates session cookies on every request
+  const { userId, redirectToSignIn } = await auth();
+
   if (!isPublicRoute(req)) {
-    const { userId, redirectToSignIn } = await auth();
     if (!userId) {
       if (isApiRoute(req)) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
